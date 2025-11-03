@@ -1,0 +1,156 @@
+# ============================================================================
+# TIFF SIMULATOR V3.0 - DEPENDENCIES
+# ============================================================================
+#
+# Wissenschaftlich validierte Package-Versionen für reproduzierbare Simulationen
+#
+# Installation:
+#   pip install -r requirements.txt
+#
+# Python Version: ≥3.8 (empfohlen: 3.9 oder 3.10)
+#
+# ============================================================================
+
+# ============================================================================
+# NUMERISCHE BIBLIOTHEKEN
+# ============================================================================
+
+# NumPy: Fundamentale Bibliothek für wissenschaftliches Rechnen
+# - Schnelle Array-Operationen (C-optimiert)
+# - Zufallszahlen-Generierung (Mersenne Twister)
+# - Mathematische Funktionen (exp, sqrt, etc.)
+# - Lineare Algebra (falls benötigt)
+#
+# Version ≥1.20.0: Einführung von stabileren Random Number Generators
+# Version ≥1.21.0: Verbesserte Typisierung für wissenschaftliche Anwendungen
+numpy>=1.21.0
+
+# ============================================================================
+# MASCHINELLES LERNEN
+# ============================================================================
+
+# scikit-learn: Random-Forest-Training für Diffusionsklassifikation
+# - Mächtige Implementierung von RandomForestClassifier
+# - Enthält Feature-Importances und robuste Parallelisierung
+scikit-learn>=1.2.0
+
+# joblib: Speichern/Laden großer Modelle (enthalten in scikit-learn, hier explizit)
+joblib>=1.2.0
+
+# SciPy: Erweiterte wissenschaftliche Funktionen
+# - Benötigt für stats.linregress in MSD/D Berechnung
+# - Signal Processing, Optimization, Stats
+scipy>=1.8.0
+
+# ============================================================================
+# BILDVERARBEITUNG
+# ============================================================================
+
+# Pillow (PIL Fork): TIFF-Export und Bildmanipulation
+# - Multi-Page TIFF Support (für Zeitreihen)
+# - 16-bit Integer Support (uint16 für realistische Photon Counts)
+# - Kompression (tiff_deflate)
+#
+# Version ≥9.0.0: Sicherheitsupdates und bessere TIFF-Unterstützung
+# Version ≥9.2.0: Verbesserte Performance für große TIFFs
+Pillow>=9.2.0
+
+# ============================================================================
+# VISUALISIERUNG (Optional, aber empfohlen)
+# ============================================================================
+
+# Matplotlib: Plotting und Visualisierung
+# - Wird für optionale Datenvisualisierung verwendet
+# - Kann deaktiviert werden wenn nur TIFFs generiert werden
+#
+# Version ≥3.5.0: Verbessertes Layout-System
+# Version ≥3.6.0: Bessere 3D-Plotting-Funktionen
+matplotlib>=3.5.0
+
+# ============================================================================
+# PROGRESS BARS
+# ============================================================================
+
+# tqdm: Progress Bars für Batch-Simulationen
+# - Echtzeit-Fortschrittsanzeige
+# - Geschwindigkeits- und Zeitschätzungen
+# - Minimal invasiv in Code-Integration
+#
+# Version ≥4.60.0: Stabile API
+# Version ≥4.64.0: Bessere Unicode-Unterstützung
+tqdm>=4.64.0
+
+# ============================================================================
+# EXCEL EXPORT
+# ============================================================================
+
+# openpyxl: Excel-Datei-Erstellung
+# - Multi-Sheet Support
+# - Benötigt für Track-Analysis Excel-Export
+openpyxl>=3.0.0
+
+# ============================================================================
+# OPTIONALE DEPENDENCIES
+# ============================================================================
+
+# pandas: Datenanalyse und CSV-Handling
+# - Wird aktuell NICHT benötigt
+# - Nützlich für erweiterte Batch-Metadaten-Analysen
+# pandas>=1.4.0  # Optional
+
+# ============================================================================
+# KOMPATIBILITÄTS-HINWEISE
+# ============================================================================
+#
+# Windows:
+# - Alle Pakete haben pre-compiled Wheels verfügbar
+# - Installation sollte problemlos funktionieren
+#
+# macOS:
+# - Bei Apple Silicon (M1/M2): NumPy nutzt Apple Accelerate
+# - tkinter ist built-in (für GUI)
+#
+# Linux:
+# - tkinter muss ggf. separat installiert werden:
+#   Ubuntu/Debian: sudo apt-get install python3-tk
+#   Fedora/RHEL: sudo dnf install python3-tkinter
+#
+# Jupyter Notebook:
+# - Alle Pakete kompatibel
+# - GUI funktioniert nicht in reinem Notebook
+# - Aber: Alle Funktionen programmtisch nutzbar
+#
+# ============================================================================
+
+# ============================================================================
+# DESKTOP APP BUILD
+# ============================================================================
+
+# PyInstaller: Erstellt standalone executables
+# - Benötigt nur für das Bauen der Desktop-App
+# - Nicht erforderlich für normale Python-Nutzung
+pyinstaller>=5.0.0
+
+# ============================================================================
+# PERFORMANCE OPTIMIZATION (Optional)
+# ============================================================================
+
+# CuPy: GPU-beschleunigte NumPy-Alternative (NVIDIA GPU erforderlich)
+# - Deutlicher Speedup für große TIFFs
+# - Nur mit CUDA-fähiger GPU sinnvoll
+# cupy-cuda11x>=11.0.0  # Uncomment if you have NVIDIA GPU with CUDA 11.x
+
+# ============================================================================
+# VERSIONS-PINNING FÜR REPRODUZIERBARKEIT
+# ============================================================================
+#
+# Falls exakte Reproduzierbarkeit gewünscht (z.B. für Publikationen):
+# Kommentiere die obigen Einträge aus und nutze diese:
+#
+# numpy==1.24.3
+# Pillow==10.0.0
+# matplotlib==3.7.2
+# tqdm==4.65.0
+# pyinstaller==5.13.0
+#
+# ============================================================================

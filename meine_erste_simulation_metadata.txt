@@ -1,0 +1,50 @@
+======================================================================
+TIFF SIMULATION - METADATA
+======================================================================
+
+Generiert: 2025-10-28T12:11:27.300814
+Dateiname: meine_erste_simulation
+
+DETEKTOR
+----------------------------------------------------------------------
+Name: TDI-G0
+FWHM: 0.400 µm
+Pixel Size: 0.108 µm
+Astigmatismus: Nein
+
+SIMULATIONSPARAMETER
+----------------------------------------------------------------------
+Modus: polyzeit
+Bildgröße: 64 × 64 px
+Anzahl Spots: 5
+Anzahl Frames: 50
+Frame Rate: 20.0 Hz
+Gesamt-Dauer: 2.50 s
+
+DIFFUSIONSPARAMETER
+----------------------------------------------------------------------
+Polymerisationszeit: 60.0 min
+D_initial: 4.000 µm²/s
+Frame Rate: 20.0 Hz
+
+Diffusionskoeffizienten:
+  D_normal: 0.8925 µm²/s
+  D_subdiffusion: 0.5355 µm²/s
+  D_confined: 0.2678 µm²/s
+  D_superdiffusion: 1.1603 µm²/s
+
+Diffusionsfraktionen:
+  normal: 65.0%
+  subdiffusion: 24.0%
+  confined: 10.0%
+  superdiffusion: 1.0%
+
+TRAJEKTORIEN-STATISTIK
+----------------------------------------------------------------------
+Anzahl Trajektorien: 5
+
+Verteilung nach Typ:
+  normal: 4 (80.0%)
+  subdiffusion: 1 (20.0%)
+
+======================================================================

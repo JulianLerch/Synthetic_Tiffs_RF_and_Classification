@@ -1,0 +1,33 @@
+636:        spot_sigma = float(meta.get("spot_intensity_sigma", 0.25))
+637:        frame_sigma = float(meta.get("frame_jitter_sigma", 0.10))
+638:        on_mean = float(meta.get("on_mean_frames", 4.0))
+639:        off_mean = float(meta.get("off_mean_frames", 6.0))
+640:        bleach_p = float(meta.get("bleach_prob_per_frame", 0.002))
+641:        z_amp_um = float(meta.get("z_amp_um", 0.7))
+642:        z_max_um = float(meta.get("z_max_um", 0.6))
+643:
+644:        # Photophysik (Blinking & Bleaching)
+645:        phot = PhotoPhysics(on_mean, off_mean, bleach_p)
+646:        on_mask = phot.generate_on_mask(num_spots, num_frames)
+647:
+648:        # Spot-Intensitäten (Lognormal-Verteilung)
+649:        base_intensities = self.detector.max_intensity * np.exp(
+650:            np.random.normal(0.0, spot_sigma, size=num_spots)
+651:        )
+652:
+653:        # Initialisiere TIFF-Stack
+654:        tiff_stack = np.zeros((num_frames, height, width), dtype=np.uint16)
+655:        
+656:        # Generiere jeden Frame
+657:        for frame_idx in range(num_frames):
+658:            # Background
+659:            frame = self.bg_gen.generate(image_size)
+660:            
+661:            # Füge jeden Spot hinzu
+662:            for traj_data in trajectories:
+663:                pos = traj_data["positions"][frame_idx]
+664:                
+665:                # Konvertiere µm zu Pixel
+666:                x_px = pos[0] / self.detector.pixel_size_um
+667:                y_px = pos[1] / self.detector.pixel_size_um
+668:                z_um = pos[2] if self.astigmatism else 0.0
