@@ -19,6 +19,7 @@ import os
 import threading
 from pathlib import Path
 from datetime import datetime
+from typing import Dict
 
 try:
     from tiff_simulator_v3 import (
@@ -26,6 +27,7 @@ try:
     )
     from metadata_exporter import MetadataExporter
     from batch_simulator import BatchSimulator, PresetBatches
+    from rf_training_session import RFTrainingSession, RFTrainingSessionConfig
 except ImportError as e:
     print(f"âŒ Import Error: {e}")
     print("   Bitte stelle sicher, dass alle Dateien im gleichen Ordner sind:")
@@ -87,6 +89,7 @@ class TIFFSimulatorGUI:
         # Thread fÃ¼r Simulation
         self.simulation_thread = None
         self.is_running = False
+        self.rf_training_thread = None
     
     def _init_variables(self):
         """Initialisiert alle Tkinter-Variablen."""
@@ -144,6 +147,20 @@ class TIFFSimulatorGUI:
         self.export_json = tk.BooleanVar(value=True)
         self.export_txt = tk.BooleanVar(value=True)
         self.export_csv = tk.BooleanVar(value=True)
+
+        # RF Training Session
+        default_rf_dir = Path.home() / "Desktop" / "rf_training_models"
+        self.rf_train_output_dir = tk.StringVar(value=str(default_rf_dir))
+        self.rf_train_times = tk.StringVar(value="0,45,90")
+        self.rf_train_frames = tk.StringVar(value="48,64,96")
+        self.rf_train_tracks = tk.IntVar(value=64)
+        self.rf_train_frame_rate = tk.DoubleVar(value=20.0)
+        self.rf_train_mode = tk.StringVar(value="window")
+        self.rf_train_poly_strategy = tk.StringVar(value="per_grade")
+        self.rf_train_save_tiffs = tk.BooleanVar(value=False)
+        self.rf_train_photophysics = tk.BooleanVar(value=False)
+        self.rf_train_astigmatism = tk.BooleanVar(value=False)
+        self.rf_train_window_sizes = tk.StringVar(value="32,48,64")
     
     def _create_widgets(self):
         """Erstellt alle GUI-Elemente."""
@@ -241,7 +258,12 @@ class TIFFSimulatorGUI:
         self.batch_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.batch_tab, text="ðŸ”„ Batch Simulation")
         self._create_batch_tab()
-        
+
+        # Tab 3: RF Training
+        self.rf_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.rf_tab, text="ðŸŒ² RF Training")
+        self._create_rf_training_tab()
+
         # Tab 3: Export-Optionen
         self.export_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.export_tab, text="ðŸ’¾ Export & Metadata")
@@ -463,7 +485,7 @@ class TIFFSimulatorGUI:
     
     def _create_batch_tab(self):
         """Tab fÃ¼r Batch Simulation."""
-        
+
         # Preset Auswahl
         preset_frame = ttk.LabelFrame(self.batch_tab, text="ðŸŽ¯ Batch Preset", padding=10)
         preset_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -507,7 +529,7 @@ class TIFFSimulatorGUI:
         )
         info_text.pack(pady=5, fill=tk.X)
         
-        info_text.insert(1.0, 
+        info_text.insert(1.0,
             "BATCH-MODUS INFO:\n\n"
             "â€¢ Quick Test: 3 Polyzeiten (30, 60, 90 min), 64Ã—64 px, 50 Frames\n"
             "â€¢ Masterthesis: VollstÃ¤ndige Studie mit 6 Polyzeiten, TDI vs Tetraspecs,\n"
@@ -517,6 +539,259 @@ class TIFFSimulatorGUI:
             "Alle TIFFs werden mit Metadata (JSON, TXT, CSV) exportiert!"
         )
         info_text.config(state=tk.DISABLED)
+
+    def _create_rf_training_tab(self):
+        """Tab fÃ¼r das eigenstÃ¤ndige RF-Training."""
+
+        container = ttk.LabelFrame(self.rf_tab, text="RF Training", padding=10)
+        container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        tk.Label(
+            container,
+            text=(
+                "Generiere balancierte Trainingsdaten fÃ¼r mehrere Polymerisationsgrade "
+                "und trainiere Modelle direkt aus der GUI."
+            ),
+            font=("Arial", 10, "bold"),
+            wraplength=600,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        times_frame = tk.Frame(container)
+        times_frame.pack(fill=tk.X, pady=2)
+        tk.Label(times_frame, text="Polyzeiten [min] (kommagetrennt):", width=32, anchor=tk.W).pack(side=tk.LEFT)
+        tk.Entry(times_frame, textvariable=self.rf_train_times, width=35).pack(side=tk.LEFT, padx=5)
+
+        frames_frame = tk.Frame(container)
+        frames_frame.pack(fill=tk.X, pady=2)
+        tk.Label(frames_frame, text="Frames pro Track (kommagetrennt):", width=32, anchor=tk.W).pack(side=tk.LEFT)
+        tk.Entry(frames_frame, textvariable=self.rf_train_frames, width=35).pack(side=tk.LEFT, padx=5)
+
+        window_frame = tk.Frame(container)
+        window_frame.pack(fill=tk.X, pady=2)
+        tk.Label(window_frame, text="Window-GrÃ¶ÃŸen fÃ¼r Sliding Windows:", width=32, anchor=tk.W).pack(side=tk.LEFT)
+        tk.Entry(window_frame, textvariable=self.rf_train_window_sizes, width=35).pack(side=tk.LEFT, padx=5)
+
+        tracks_frame = tk.Frame(container)
+        tracks_frame.pack(fill=tk.X, pady=2)
+        tk.Label(tracks_frame, text="Tracks je Diffusionstyp:", width=32, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(tracks_frame, from_=16, to=256, increment=8, textvariable=self.rf_train_tracks, width=10).pack(side=tk.LEFT, padx=5)
+
+        rate_frame = tk.Frame(container)
+        rate_frame.pack(fill=tk.X, pady=2)
+        tk.Label(rate_frame, text="Frame Rate [Hz]:", width=32, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(rate_frame, from_=5, to=60, increment=1, textvariable=self.rf_train_frame_rate, width=10).pack(side=tk.LEFT, padx=5)
+
+        mode_frame = tk.Frame(container)
+        mode_frame.pack(fill=tk.X, pady=2)
+        tk.Label(mode_frame, text="Trainingsmodus:", width=32, anchor=tk.W).pack(side=tk.LEFT)
+        self.rf_mode_combo = ttk.Combobox(
+            mode_frame,
+            textvariable=self.rf_train_mode,
+            values=("window", "track"),
+            state="readonly",
+            width=15,
+        )
+        self.rf_mode_combo.pack(side=tk.LEFT, padx=5)
+        tk.Label(mode_frame, text="window = Sliding Windows, track = komplette Trajektorien", fg="#7f8c8d").pack(side=tk.LEFT)
+
+        strategy_frame = tk.Frame(container)
+        strategy_frame.pack(fill=tk.X, pady=2)
+        tk.Label(strategy_frame, text="Polygrad-Strategie:", width=32, anchor=tk.W).pack(side=tk.LEFT)
+        self.rf_strategy_combo = ttk.Combobox(
+            strategy_frame,
+            textvariable=self.rf_train_poly_strategy,
+            values=("combined", "per_grade", "auto"),
+            state="readonly",
+            width=15,
+        )
+        self.rf_strategy_combo.pack(side=tk.LEFT, padx=5)
+        tk.Label(strategy_frame, text="per_grade = eigenes Modell pro Polyzeit", fg="#7f8c8d").pack(side=tk.LEFT)
+
+        options_frame = tk.Frame(container)
+        options_frame.pack(fill=tk.X, pady=4)
+        ttk.Checkbutton(options_frame, text="Photophysics aktivieren", variable=self.rf_train_photophysics).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(options_frame, text="Astigmatismus", variable=self.rf_train_astigmatism).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(options_frame, text="TIFFs speichern", variable=self.rf_train_save_tiffs).pack(side=tk.LEFT, padx=5)
+
+        output_frame = tk.Frame(container)
+        output_frame.pack(fill=tk.X, pady=6)
+        tk.Label(output_frame, text="Output-Verzeichnis:", width=32, anchor=tk.W).pack(side=tk.LEFT)
+        tk.Entry(output_frame, textvariable=self.rf_train_output_dir, width=35).pack(side=tk.LEFT, padx=5)
+        ttk.Button(output_frame, text="Ordner", width=6, command=self._browse_rf_output).pack(side=tk.LEFT)
+
+        button_frame = tk.Frame(container)
+        button_frame.pack(fill=tk.X, pady=8)
+        self.rf_start_button = ttk.Button(
+            button_frame,
+            text="RF Training starten",
+            command=self._start_rf_training,
+            width=30,
+        )
+        self.rf_start_button.pack(side=tk.LEFT, padx=5)
+        ttk.Button(
+            button_frame,
+            text="Log leeren",
+            command=self._clear_rf_log,
+            width=18,
+        ).pack(side=tk.LEFT, padx=5)
+
+        log_frame = ttk.LabelFrame(container, text="Status & Log", padding=5)
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        self.rf_training_log = scrolledtext.ScrolledText(
+            log_frame,
+            height=12,
+            wrap=tk.WORD,
+            state=tk.DISABLED,
+            font=("Consolas", 9),
+        )
+        self.rf_training_log.pack(fill=tk.BOTH, expand=True)
+
+    def _browse_rf_output(self):
+        directory = filedialog.askdirectory(initialdir=self.rf_train_output_dir.get())
+        if directory:
+            self.rf_train_output_dir.set(directory)
+
+    def _clear_rf_log(self):
+        if not hasattr(self, "rf_training_log"):
+            return
+        self.rf_training_log.config(state=tk.NORMAL)
+        self.rf_training_log.delete("1.0", tk.END)
+        self.rf_training_log.config(state=tk.DISABLED)
+
+    def _log_rf_training(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+
+        def append():
+            if not hasattr(self, "rf_training_log"):
+                return
+            self.rf_training_log.config(state=tk.NORMAL)
+            self.rf_training_log.insert(tk.END, f"[{timestamp}] {message}\n")
+            self.rf_training_log.see(tk.END)
+            self.rf_training_log.config(state=tk.DISABLED)
+
+        import threading
+
+        if threading.current_thread() is threading.main_thread():
+            append()
+        else:
+            self.root.after(0, append)
+
+    def _parse_float_list(self, value: str) -> list:
+        cleaned = value.replace(";", ",").replace("min", "")
+        result = []
+        for part in cleaned.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                result.append(float(part))
+            except ValueError:
+                continue
+        return result
+
+    def _parse_int_list(self, value: str) -> list:
+        floats = self._parse_float_list(value)
+        return [int(round(v)) for v in floats]
+
+    def _start_rf_training(self):
+        if getattr(self, "rf_training_thread", None) and self.rf_training_thread.is_alive():
+            messagebox.showwarning("RF Training", "Ein RF-Training lÃ¤uft bereits.")
+            return
+
+        self._clear_rf_log()
+        self._log_rf_training("Initialisiere RF-Training...")
+        self._update_status("ðŸŒ² Bereite RF-Training vor...", "#2980b9")
+        self._update_progress(5)
+        self.rf_start_button.config(state=tk.DISABLED)
+
+        self.rf_training_thread = threading.Thread(target=self._run_rf_training, daemon=True)
+        self.rf_training_thread.start()
+
+    def _run_rf_training(self):
+        try:
+            output_dir = Path(self.rf_train_output_dir.get()).expanduser()
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            times = self._parse_float_list(self.rf_train_times.get()) or [0.0, 45.0, 90.0]
+            frames = self._parse_int_list(self.rf_train_frames.get()) or [96]
+            window_sizes = self._parse_int_list(self.rf_train_window_sizes.get()) or [32, 48, 64]
+
+            rf_overrides = {
+                "window_sizes": tuple(int(max(3, w)) for w in window_sizes),
+                "max_label_switches": 0 if self.rf_train_mode.get() == "track" else 1,
+            }
+
+            detector = TDI_PRESET if self.detector_var.get() == "TDI-G0" else TETRASPECS_PRESET
+
+            session_config = RFTrainingSessionConfig(
+                output_dir=str(output_dir),
+                detector=detector,
+                polymerization_times=times,
+                frames_per_track=frames,
+                tracks_per_diffusion=self.rf_train_tracks.get(),
+                frame_rate_hz=self.rf_train_frame_rate.get(),
+                astigmatism=self.rf_train_astigmatism.get(),
+                enable_photophysics=self.rf_train_photophysics.get(),
+                training_mode=self.rf_train_mode.get(),
+                polygrade_strategy=self.rf_train_poly_strategy.get(),
+                rf_config_overrides=rf_overrides,
+                save_tiffs=self.rf_train_save_tiffs.get(),
+            )
+
+            session = RFTrainingSession(session_config)
+
+            def progress_callback(current: int, total: int, info: Dict[str, object]):
+                percent = int((current / max(total, 1)) * 80) + 10
+                self._update_progress(percent)
+                self._log_rf_training(
+                    f"Sim {current}/{total}: t={info.get('poly_time_min', 0):.1f} min, "
+                    f"{info.get('diffusion_type')}, {info.get('frames')} Frames"
+                )
+
+            self._log_rf_training("Generiere Trainingsdaten...")
+            result = session.run(progress_callback=progress_callback)
+
+            trainer_summary = result.get("trainer_summary", {})
+            model_path = trainer_summary.get("model_path")
+            samples = trainer_summary.get("samples", 0)
+            oob = trainer_summary.get("oob_score")
+            validation = trainer_summary.get("validation_accuracy")
+
+            if model_path:
+                self._log_rf_training(f"Modell gespeichert: {model_path}")
+            self._log_rf_training(f"Samples: {samples}")
+            if oob is not None:
+                self._log_rf_training(f"OOB-Score: {oob:.3f}")
+            if validation is not None:
+                self._log_rf_training(f"OOB-Validierung: {validation:.3f}")
+
+            poly_models = trainer_summary.get("polygrade_models", {}) or {}
+            for key, meta in poly_models.items():
+                label = meta.get("poly_time_min")
+                trained = "✅" if meta.get("model_trained") else "⚠️"
+                count = meta.get("samples")
+                self._log_rf_training(f"{trained} Poly {label}: {count} Samples")
+
+            session_report = result.get("session_report_path")
+            if session_report:
+                self._log_rf_training(f"Session-Report: {session_report}")
+
+            self._update_progress(100)
+            self._update_status("ðŸŒ² RF-Training abgeschlossen!", "#27ae60")
+            if model_path:
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "RF Training",
+                    f"Training abgeschlossen!\n\nModell: {model_path}\nSamples: {samples}"
+                ))
+        except Exception as exc:
+            self._log_rf_training(f"Fehler: {exc}")
+            self._update_status("❌ RF-Training fehlgeschlagen", "#c0392b")
+            self.root.after(0, lambda: messagebox.showerror("RF Training", str(exc)))
+        finally:
+            self._update_progress(0)
+            self.root.after(0, lambda: self.rf_start_button.config(state=tk.NORMAL))
+            self.rf_training_thread = None
         
         # Custom Times (überschreibt Preset, falls gesetzt)
         custom_frame = ttk.LabelFrame(self.batch_tab, text="?? Custom Times", padding=10)

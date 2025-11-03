@@ -9,7 +9,7 @@ Workflow:
 1. Parse experimentelle TrackMate XML
 2. Schätze durchschnittlichen Diffusionskoeffizienten
 3. Berechne daraus den Polymerisationsgrad t_poly
-4. Generiere ~100-200 Tracks bei diesem t_poly (mit BatchSimulator)
+4. Generiere ~100-200 Tracks bei diesem t_poly (mit RFTrainingSession)
 5. Quick-Train RF (weniger Bäume, aber spezialisiert)
 6. Nutze diesen RF für die Analyse
 
@@ -29,8 +29,8 @@ import tempfile
 import shutil
 
 from tiff_simulator_v3 import DetectorPreset
-from batch_simulator import BatchSimulator
-from rf_trainer import RandomForestTrainer, RFTrainingConfig
+from rf_trainer import RandomForestTrainer
+from rf_training_session import RFTrainingSession, RFTrainingSessionConfig
 
 warnings.filterwarnings('ignore')
 
@@ -282,10 +282,8 @@ def quick_train_adaptive_rf(
     trainer: Optional[RandomForestTrainer] = None
 
     try:
-        rf_config = {
+        rf_overrides = {
             'window_sizes': (32, 48, 64),
-            'window_size': 48,
-            'step_size': 0,
             'step_size_fraction': 0.5,
             'n_estimators': 1024,
             'max_depth': 18,
@@ -296,13 +294,7 @@ def quick_train_adaptive_rf(
             'max_windows_per_class': 80_000,
             'min_majority_fraction': 0.7,
             'max_label_switches': 1,
-            'auto_balance_training': False,
         }
-        batch = BatchSimulator(
-            output_dir=str(temp_dir),
-            enable_rf=True,
-            rf_config=rf_config,
-        )
 
         offsets = [-20.0, 0.0, 20.0]
         t_poly_values = sorted({min(180.0, max(0.0, estimate.t_poly_min + delta)) for delta in offsets})
@@ -310,36 +302,27 @@ def quick_train_adaptive_rf(
         num_frames = 224
 
         if verbose:
-            print(f"   → Plane Balanced-RF-Training (Fenster: {rf_config['window_sizes']})")
+            print(f"   → Plane RF-Training (Fenster: {rf_overrides['window_sizes']})")
             print(f"   → Polymerisationszeiten für Training: {t_poly_values}")
 
-        batch.add_balanced_rf_training_set(
+        session_config = RFTrainingSessionConfig(
+            output_dir=str(temp_dir),
             detector=detector,
-            t_poly_series=t_poly_values,
-            num_frames=num_frames,
-            spots_per_type=spots_per_type,
+            polymerization_times=t_poly_values,
+            frames_per_track=[num_frames],
+            tracks_per_diffusion=spots_per_type,
             frame_rate_hz=frame_rate_hz,
+            training_mode="window",
+            polygrade_strategy="per_grade",
+            rf_config_overrides=rf_overrides,
+            save_tiffs=False,
+            enable_photophysics=False,
         )
 
-        mixed_filename = f"adaptive_mixed_t{int(round(estimate.t_poly_min))}min.tif"
-        batch.add_task({
-            'detector': detector,
-            'mode': 'polyzeit',
-            't_poly_min': estimate.t_poly_min,
-            'filename': mixed_filename,
-            'image_size': (128, 128),
-            'num_spots': max(spots_per_type, 24),
-            'num_frames': num_frames,
-            'frame_rate_hz': frame_rate_hz,
-            'trajectory_options': {
-                'enable_switching': True,
-                'max_switches': None,
-            },
-        })
-
-        stats = batch.run()
-        trainer = batch.rf_trainer
-        rf_result = stats.get('rf', {})
+        session = RFTrainingSession(session_config)
+        result = session.run()
+        trainer = session.trainer
+        rf_result = result.get('trainer_summary', {})
         model_path = rf_result.get('model_path')
 
         if verbose:

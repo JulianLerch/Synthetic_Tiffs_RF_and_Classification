@@ -39,6 +39,8 @@ matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
+from adaptive_rf_trainer import PolygradEstimator
+
 
 DiffusionLabel = str
 
@@ -274,10 +276,30 @@ class MultiScaleWindowAnalyzer:
         """
         # Lade trainiertes Modell
         model_data = load(str(model_path))
-        self.rf_model = model_data["model"]
+        self.model_data = model_data
+
+        models_dict = model_data.get("models") or {}
+        base_model = model_data.get("model")
+        if not models_dict and base_model is not None:
+            models_dict = {"combined": base_model}
+        elif base_model is not None and "combined" not in models_dict:
+            models_dict["combined"] = base_model
+
+        if not models_dict:
+            raise ValueError("RF-Modell enthält keine Modelle.")
+
+        self.models = models_dict
+        self.model_index = model_data.get("model_index", {}) or {}
+        self.default_model_key = model_data.get("default_model_key") or next(iter(models_dict.keys()))
+        self.rf_model = models_dict.get(self.default_model_key)
         self.feature_names_trained = model_data.get("feature_names", self.FEATURE_NAMES)
 
         config = model_data.get("config", {}) or {}
+        self.training_mode = config.get("training_mode", "window")
+        self.training_mode = (self.training_mode or "window").lower()
+        if self.training_mode not in {"window", "track"}:
+            self.training_mode = "window"
+        self.uses_track_model = self.training_mode == "track"
 
         trained_windows = config.get("window_sizes") or []
         if not trained_windows and config.get("window_size"):
@@ -308,16 +330,57 @@ class MultiScaleWindowAnalyzer:
         smallest_window = min(self.window_sizes) if self.window_sizes else 30
         self.min_segment_length = max(3, int(round(smallest_window * self.min_segment_length_factor)))
 
+        self.class_labels = []
+        self.default_label = "subdiffusion"
+        self.set_poly_time_hint(None)
+
+    def set_poly_time_hint(self, poly_time_min: Optional[float]) -> str:
+        key = self._select_model_key(poly_time_min)
+        model = self.models.get(key)
+        if model is None:
+            key = self.default_model_key
+            model = self.models[key]
+
+        self.active_model_key = key
+        self.rf_model = model
         self.class_labels = list(getattr(self.rf_model, "classes_", []))
         if not self.class_labels:
             self.class_labels = ["subdiffusion", "normal", "confined", "superdiffusion"]
         self.default_label = self.class_labels[0]
+        self.active_poly_time = poly_time_min
+        return key
+
+    def _select_model_key(self, poly_time_min: Optional[float]) -> str:
+        if not self.models:
+            return self.default_model_key
+
+        if poly_time_min is None:
+            return self.default_model_key
+
+        best_key = self.default_model_key
+        best_diff = float("inf")
+        for key, meta in self.model_index.items():
+            poly_val = meta.get("poly_time_min")
+            if poly_val is None:
+                continue
+            try:
+                diff = abs(float(poly_val) - float(poly_time_min))
+            except Exception:
+                continue
+            if diff < best_diff:
+                best_diff = diff
+                best_key = key
+
+        return best_key
 
     def analyze_track(self, track: Track, frame_rate_hz: float = 20.0) -> TrackAnalysis:
         """Analysiere einen kompletten Track mit Multi-Scale Windows."""
 
         positions = track.get_positions()
         frames = track.get_frames()
+
+        if self.uses_track_model:
+            return self._analyze_track_level(track, positions, frames, frame_rate_hz)
 
         # 1. Multi-Scale Prediction
         frame_predictions = self._multi_scale_classification(positions, frames)
@@ -359,6 +422,60 @@ class MultiScaleWindowAnalyzer:
             diffusion_distribution=dict(diffusion_distribution),
             mean_D_per_type=mean_D,
             mean_alpha_per_type=mean_alpha
+        )
+
+    def _analyze_track_level(
+        self,
+        track: Track,
+        positions: np.ndarray,
+        frames: np.ndarray,
+        frame_rate_hz: float,
+    ) -> TrackAnalysis:
+        features = self._compute_features(positions)
+        if features is None:
+            features = np.zeros(len(self.FEATURE_NAMES), dtype=np.float32)
+
+        try:
+            proba = self.rf_model.predict_proba([features])[0]
+            classes = list(self.rf_model.classes_)
+        except Exception:
+            classes = self.class_labels
+            proba = np.zeros(len(classes), dtype=float)
+
+        if len(proba) == 0:
+            predicted_label = self.default_label
+            predicted_prob = 0.0
+        else:
+            best_idx = int(np.argmax(proba))
+            predicted_label = classes[best_idx]
+            predicted_prob = float(proba[best_idx])
+
+        frame_labels = {int(f): predicted_label for f in frames}
+
+        msd_slope, D_value = self._compute_msd_and_D(positions, frame_rate_hz)
+
+        segment = ClassifiedSegment(
+            start_frame=int(frames[0]) if frames.size else 0,
+            end_frame=int(frames[-1]) if frames.size else 0,
+            diffusion_type=predicted_label,
+            probability=predicted_prob,
+            msd_slope=msd_slope,
+            D_value=D_value,
+            segment_length=int(frames.size),
+        )
+
+        diffusion_distribution = {predicted_label: int(frames.size)}
+        mean_D_per_type = {predicted_label: D_value}
+        mean_alpha_per_type = {predicted_label: msd_slope}
+
+        return TrackAnalysis(
+            track_id=track.track_id,
+            track_length=len(track),
+            segments=[segment],
+            frame_labels=frame_labels,
+            diffusion_distribution=diffusion_distribution,
+            mean_D_per_type=mean_D_per_type,
+            mean_alpha_per_type=mean_alpha_per_type,
         )
 
     def _step_for_window(self, window_size: int) -> int:
@@ -1082,6 +1199,20 @@ class TrackAnalysisOrchestrator:
 
         print(f"   ✅ {len(tracks)} Tracks gefunden")
         print(f"   📏 Mean Length: {preview['mean_length']:.1f} Frames")
+
+        poly_hint = None
+        try:
+            estimator = PolygradEstimator()
+            estimate = estimator.estimate_from_xml(xml_path, frame_rate_hz)
+            poly_hint = estimate.t_poly_min
+            print(f"   🧪 Polygrad-Schätzung: t ≈ {poly_hint:.1f} min")
+        except Exception as exc:
+            print(f"   ⚠️ Polygrad-Schätzung fehlgeschlagen: {exc}")
+
+        try:
+            self.analyzer.set_poly_time_hint(poly_hint)
+        except Exception as exc:
+            print(f"   ⚠️ Modellwechsel nicht möglich: {exc}")
 
         # 2. Analysiere jeden Track
         print("   Klassifiziere Tracks...")
