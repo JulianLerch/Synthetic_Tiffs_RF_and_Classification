@@ -277,9 +277,41 @@ class MultiScaleWindowAnalyzer:
         self.rf_model = model_data["model"]
         self.feature_names_trained = model_data.get("feature_names", self.FEATURE_NAMES)
 
-        # Window-Konfiguration
-        self.window_sizes = window_sizes or [30, 48, 64, 96]
-        self.min_segment_length = 30  # Minimum für Glättung
+        config = model_data.get("config", {}) or {}
+
+        trained_windows = config.get("window_sizes") or []
+        if not trained_windows and config.get("window_size"):
+            trained_windows = [config.get("window_size")]
+
+        if window_sizes:
+            derived_windows = [int(w) for w in window_sizes if int(w) > 0]
+        elif trained_windows:
+            derived_windows = [int(w) for w in trained_windows if int(w) > 0]
+        else:
+            derived_windows = [30, 48, 64, 96]
+
+        derived_windows = sorted({max(3, int(abs(w))) for w in derived_windows})
+        self.window_sizes = derived_windows
+
+        self.fixed_step_size = config.get("step_size")
+        self.step_size_fraction = config.get("step_size_fraction", None)
+        if self.step_size_fraction is None or self.step_size_fraction <= 0:
+            self.step_size_fraction = 0.5
+
+        self.min_segment_length_factor = config.get("min_segment_length_factor", 0.75)
+        if not self.min_segment_length_factor or self.min_segment_length_factor <= 0:
+            self.min_segment_length_factor = 0.75
+
+        self.min_majority_fraction = config.get("min_majority_fraction", 0.7)
+        self.keep_probability_threshold = max(0.5, min(0.95, self.min_majority_fraction - 0.05))
+
+        smallest_window = min(self.window_sizes) if self.window_sizes else 30
+        self.min_segment_length = max(3, int(round(smallest_window * self.min_segment_length_factor)))
+
+        self.class_labels = list(getattr(self.rf_model, "classes_", []))
+        if not self.class_labels:
+            self.class_labels = ["subdiffusion", "normal", "confined", "superdiffusion"]
+        self.default_label = self.class_labels[0]
 
     def analyze_track(self, track: Track, frame_rate_hz: float = 20.0) -> TrackAnalysis:
         """Analysiere einen kompletten Track mit Multi-Scale Windows."""
@@ -289,12 +321,22 @@ class MultiScaleWindowAnalyzer:
 
         # 1. Multi-Scale Prediction
         frame_predictions = self._multi_scale_classification(positions, frames)
+        frame_predictions = self._prepare_frame_probabilities(frame_predictions, len(frames))
 
         # 2. Glätte Predictions (min_segment_length)
-        smoothed_labels = self._smooth_predictions(frame_predictions, self.min_segment_length)
+        smoothed_labels, frame_label_probabilities = self._smooth_predictions(
+            frame_predictions,
+            len(frames)
+        )
 
         # 3. Finde Segmente (zusammenhängende Label-Regionen)
-        segments = self._extract_segments(positions, frames, smoothed_labels, frame_rate_hz)
+        segments = self._extract_segments(
+            positions,
+            frames,
+            smoothed_labels,
+            frame_rate_hz,
+            frame_label_probabilities,
+        )
 
         # 4. Berechne Statistiken
         diffusion_distribution = Counter(smoothed_labels.values())
@@ -319,6 +361,49 @@ class MultiScaleWindowAnalyzer:
             mean_alpha_per_type=mean_alpha
         )
 
+    def _step_for_window(self, window_size: int) -> int:
+        if self.fixed_step_size and self.fixed_step_size > 0:
+            return max(1, min(int(window_size), int(self.fixed_step_size)))
+        fraction = self.step_size_fraction if self.step_size_fraction and self.step_size_fraction > 0 else 0.5
+        return max(1, int(round(window_size * fraction)))
+
+    def _prepare_frame_probabilities(
+        self,
+        frame_predictions: Dict[int, Dict[str, float]],
+        total_frames: int,
+    ) -> Dict[int, Dict[str, float]]:
+        if not frame_predictions:
+            return {i: {self.default_label: 1.0} for i in range(total_frames)}
+
+        counts = Counter()
+        for probs in frame_predictions.values():
+            if probs:
+                best_label = max(probs.items(), key=lambda x: x[1])[0]
+                counts[best_label] += 1
+
+        fallback_label = counts.most_common(1)[0][0] if counts else self.default_label
+
+        normalized = {}
+        for frame_idx in range(total_frames):
+            probs = frame_predictions.get(frame_idx)
+            if not probs:
+                normalized[frame_idx] = {fallback_label: 1.0}
+                continue
+
+            clean = {label: max(0.0, float(value)) for label, value in probs.items() if value is not None}
+            total = sum(clean.values())
+            if total <= 0:
+                normalized[frame_idx] = {fallback_label: 1.0}
+                continue
+
+            normalized_probs = {label: value / total for label, value in clean.items()}
+            # ensure fallback exists for stability
+            if fallback_label not in normalized_probs:
+                normalized_probs[fallback_label] = 0.0
+            normalized[frame_idx] = normalized_probs
+
+        return normalized
+
     def _multi_scale_classification(self, positions: np.ndarray,
                                    frames: np.ndarray) -> Dict[int, Dict[str, float]]:
         """
@@ -330,11 +415,15 @@ class MultiScaleWindowAnalyzer:
             Für jeden Frame: Wahrscheinlichkeiten aller Labels (über alle Window-Größen aggregiert)
         """
 
-        frame_votes = defaultdict(lambda: defaultdict(list))  # frame → label → [probabilities]
+        frame_votes = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))  # frame → label → [sum_prob, total_weight]
 
         # Iteriere über alle Window-Größen
         for window_size in self.window_sizes:
-            step_size = window_size // 2  # 50% Overlap
+            if positions.shape[0] < window_size:
+                continue
+
+            step_size = self._step_for_window(window_size)
+            weight = float(window_size)
 
             for start in range(0, len(positions) - window_size + 1, step_size):
                 end = start + window_size
@@ -353,18 +442,26 @@ class MultiScaleWindowAnalyzer:
                 # Addiere Votes für alle Frames in diesem Window
                 for frame_idx in range(start, end):
                     for label, prob in zip(predicted_classes, proba):
-                        frame_votes[frame_idx][label].append(prob)
+                        vote_entry = frame_votes[frame_idx][label]
+                        vote_entry[0] += float(prob) * weight
+                        vote_entry[1] += weight
 
         # Aggregiere: Mittlere Wahrscheinlichkeit über alle Windows
         frame_predictions = {}
         for frame_idx, label_probs in frame_votes.items():
-            aggregated = {label: np.mean(probs) for label, probs in label_probs.items()}
+            aggregated = {}
+            for label, (prob_sum, total_weight) in label_probs.items():
+                if total_weight > 0:
+                    aggregated[label] = prob_sum / total_weight
             frame_predictions[frame_idx] = aggregated
 
         return frame_predictions
 
-    def _smooth_predictions(self, frame_predictions: Dict[int, Dict[str, float]],
-                           min_length: int) -> Dict[int, DiffusionLabel]:
+    def _smooth_predictions(
+        self,
+        frame_predictions: Dict[int, Dict[str, float]],
+        total_frames: int,
+    ) -> Tuple[Dict[int, DiffusionLabel], Dict[int, float]]:
         """
         Glätte Predictions mit min_segment_length.
 
@@ -373,8 +470,12 @@ class MultiScaleWindowAnalyzer:
 
         # 1. Wähle wahrscheinlichstes Label pro Frame
         raw_labels = {}
-        for frame_idx, probs in sorted(frame_predictions.items()):
-            best_label = max(probs.items(), key=lambda x: x[1])[0]
+        for frame_idx in range(total_frames):
+            probs = frame_predictions.get(frame_idx, {})
+            if probs:
+                best_label = max(probs.items(), key=lambda x: x[1])[0]
+            else:
+                best_label = self.default_label
             raw_labels[frame_idx] = best_label
 
         # 2. Finde Segmente
@@ -382,8 +483,8 @@ class MultiScaleWindowAnalyzer:
         current_label = None
         current_start = None
 
-        for frame_idx in sorted(raw_labels.keys()):
-            label = raw_labels[frame_idx]
+        for frame_idx in range(total_frames):
+            label = raw_labels.get(frame_idx, self.default_label)
 
             if label != current_label:
                 if current_label is not None:
@@ -399,23 +500,29 @@ class MultiScaleWindowAnalyzer:
         smoothed_segments = []
         for i, (start, end, label) in enumerate(segments):
             length = end - start + 1
+            probs = [frame_predictions.get(idx, {}).get(label, 0.0) for idx in range(start, end + 1)]
+            avg_prob = float(np.mean(probs)) if probs else 0.0
 
-            if length < min_length:
-                # Kurzes Segment → ersetze durch wahrscheinlicheren Nachbarn
-                prev_label = segments[i-1][2] if i > 0 else None
-                next_label = segments[i+1][2] if i < len(segments) - 1 else None
+            if length < self.min_segment_length and avg_prob < self.keep_probability_threshold:
+                prev_label = segments[i - 1][2] if i > 0 else None
+                next_label = segments[i + 1][2] if i < len(segments) - 1 else None
 
-                # Wähle häufigeren Nachbarn
-                if prev_label == next_label and prev_label is not None:
-                    new_label = prev_label
-                elif prev_label is not None:
-                    new_label = prev_label
-                elif next_label is not None:
-                    new_label = next_label
+                candidates = []
+                if prev_label is not None:
+                    prev_probs = [frame_predictions.get(idx, {}).get(prev_label, 0.0) for idx in range(start, end + 1)]
+                    candidates.append((float(np.mean(prev_probs)) if prev_probs else 0.0, prev_label))
+                if next_label is not None:
+                    next_probs = [frame_predictions.get(idx, {}).get(next_label, 0.0) for idx in range(start, end + 1)]
+                    candidates.append((float(np.mean(next_probs)) if next_probs else 0.0, next_label))
+
+                if candidates:
+                    best_label = max(candidates, key=lambda x: x[0])[1]
+                elif avg_prob >= self.keep_probability_threshold:
+                    best_label = label
                 else:
-                    new_label = label  # Behalte Original
+                    best_label = self.default_label
 
-                smoothed_segments.append((start, end, new_label))
+                smoothed_segments.append((start, end, best_label))
             else:
                 smoothed_segments.append((start, end, label))
 
@@ -430,15 +537,18 @@ class MultiScaleWindowAnalyzer:
 
         # 5. Konvertiere zu frame → label mapping
         smoothed_labels = {}
+        frame_confidences = {}
         for start, end, label in merged:
             for frame_idx in range(start, end + 1):
                 smoothed_labels[frame_idx] = label
+                frame_confidences[frame_idx] = frame_predictions.get(frame_idx, {}).get(label, 0.0)
 
-        return smoothed_labels
+        return smoothed_labels, frame_confidences
 
     def _extract_segments(self, positions: np.ndarray, frames: np.ndarray,
                          frame_labels: Dict[int, DiffusionLabel],
-                         frame_rate_hz: float) -> List[ClassifiedSegment]:
+                         frame_rate_hz: float,
+                         frame_label_probabilities: Dict[int, float]) -> List[ClassifiedSegment]:
         """Extrahiere klassifizierte Segmente mit MSD/D Berechnung."""
 
         segments = []
@@ -446,20 +556,24 @@ class MultiScaleWindowAnalyzer:
         current_start = None
         current_indices = []
 
+        export_min_length = max(6, self.min_segment_length // 2)
+
         for i, frame_idx in enumerate(frames):
-            label = frame_labels.get(i, "unknown")
+            label = frame_labels.get(i, self.default_label)
 
             if label != current_label:
                 # Speichere vorheriges Segment
-                if current_label is not None and len(current_indices) >= 10:
+                if current_label is not None and len(current_indices) >= export_min_length:
                     seg_positions = positions[current_indices]
                     msd_slope, D_value = self._compute_msd_and_D(seg_positions, frame_rate_hz)
+                    probs = [frame_label_probabilities.get(idx, 0.0) for idx in current_indices]
+                    avg_prob = float(np.mean(probs)) if probs else 0.0
 
                     segments.append(ClassifiedSegment(
                         start_frame=int(frames[current_start]),
                         end_frame=int(frames[current_indices[-1]]),
                         diffusion_type=current_label,
-                        probability=1.0,  # Nach Smoothing
+                        probability=avg_prob,
                         msd_slope=msd_slope,
                         D_value=D_value,
                         segment_length=len(current_indices)
@@ -473,15 +587,17 @@ class MultiScaleWindowAnalyzer:
                 current_indices.append(i)
 
         # Letztes Segment
-        if current_label is not None and len(current_indices) >= 10:
+        if current_label is not None and len(current_indices) >= export_min_length:
             seg_positions = positions[current_indices]
             msd_slope, D_value = self._compute_msd_and_D(seg_positions, frame_rate_hz)
+            probs = [frame_label_probabilities.get(idx, 0.0) for idx in current_indices]
+            avg_prob = float(np.mean(probs)) if probs else 0.0
 
             segments.append(ClassifiedSegment(
                 start_frame=int(frames[current_start]),
                 end_frame=int(frames[current_indices[-1]]),
                 diffusion_type=current_label,
-                probability=1.0,
+                probability=avg_prob,
                 msd_slope=msd_slope,
                 D_value=D_value,
                 segment_length=len(current_indices)

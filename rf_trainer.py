@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, NamedTuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, NamedTuple
 import random
 
 import json
@@ -43,7 +43,9 @@ class RFTrainingConfig:
     """
 
     window_size: int = 48
-    step_size: int = 32       # OPTIMIERT: Weniger Overlap (war 16)
+    window_sizes: Tuple[int, ...] = (32, 48, 64)
+    step_size: Optional[int] = None
+    step_size_fraction: float = 0.5
     n_estimators: int = 2048  # OPTIMIERT: Mehr Bäume (war 1024)
     max_depth: Optional[int] = 20      # OPTIMIERT: Konservativer (war 28)
     min_samples_leaf: int = 5          # OPTIMIERT: Stärker regularisiert (war 3)
@@ -56,6 +58,33 @@ class RFTrainingConfig:
     max_samples: Optional[float] = 0.85
     max_windows_per_class: Optional[int] = 100_000
     max_windows_per_track: Optional[int] = 600
+    min_majority_fraction: float = 0.7
+    max_label_switches: int = 1
+    min_segment_length_factor: float = 0.75
+
+    def __post_init__(self) -> None:
+        sizes = self.window_sizes or (self.window_size,)
+        normalized = sorted({int(max(3, s)) for s in sizes})
+        if not normalized:
+            normalized = [max(3, int(self.window_size))]
+        if self.window_size not in normalized:
+            normalized.append(int(self.window_size))
+            normalized = sorted({int(max(3, s)) for s in normalized})
+        self.window_sizes = tuple(normalized)
+
+    @property
+    def smallest_window(self) -> int:
+        return int(self.window_sizes[0])
+
+    def iter_windows(self) -> Iterable[int]:
+        for size in self.window_sizes:
+            yield int(size)
+
+    def step_for_window(self, window: int) -> int:
+        if self.step_size is not None and self.step_size > 0:
+            return max(1, min(int(window), int(self.step_size)))
+        frac = max(0.05, float(self.step_size_fraction or 0.5))
+        return max(1, int(round(window * frac)))
 
 
 class WindowMeta(NamedTuple):
@@ -66,6 +95,9 @@ class WindowMeta(NamedTuple):
     label: DiffusionLabel
     track_index: int
     track_length: int
+    window_size: int
+    majority_fraction: float
+    label_switches: int
 
 
 class RandomForestTrainer:
@@ -132,9 +164,11 @@ class RandomForestTrainer:
 
         initial_count = len(self.features)
 
+        min_window = self.config.smallest_window
+
         for track_idx, traj in enumerate(trajectories):
             positions = np.asarray(traj.get("positions"))
-            if positions.ndim != 2 or positions.shape[0] < self.config.window_size:
+            if positions.ndim != 2 or positions.shape[0] < min_window:
                 continue
 
             labels = expand_labels(
@@ -215,34 +249,56 @@ class RandomForestTrainer:
         frame_rate: Optional[float],
         track_index: int,
     ) -> None:
-        window = self.config.window_size
-        step = max(1, self.config.step_size)
         max_per_track = self.config.max_windows_per_track or 0
         windows_taken = 0
 
-        for start in range(0, positions.shape[0] - window + 1, step):
-            end = start + window
-            window_pos = positions[start:end]
-            window_labels = labels[start:end]
-
-            feature_vec = self._compute_features(window_pos)
-            if feature_vec is None:
+        for window in self.config.iter_windows():
+            if positions.shape[0] < window:
                 continue
 
-            target_label = self._derive_window_label(window_labels)
+            step = self.config.step_for_window(window)
 
-            meta = WindowMeta(
-                start_frame=start,
-                end_frame=end,
-                poly_time_min=poly_time,
-                frame_rate_hz=frame_rate,
-                label=target_label,
-                track_index=track_index,
-                track_length=positions.shape[0],
-            )
+            for start in range(0, positions.shape[0] - window + 1, step):
+                end = start + window
+                window_pos = positions[start:end]
+                window_labels = labels[start:end]
 
-            if self._maybe_store_window(feature_vec.tolist(), target_label, meta):
-                windows_taken += 1
+                feature_vec = self._compute_features(window_pos)
+                if feature_vec is None:
+                    continue
+
+                label_summary = self._summarize_window_labels(window_labels)
+                if label_summary is None:
+                    continue
+
+                target_label, majority_fraction, switch_count = label_summary
+
+                if majority_fraction < self.config.min_majority_fraction:
+                    continue
+                if (
+                    self.config.max_label_switches is not None
+                    and switch_count > self.config.max_label_switches
+                ):
+                    continue
+
+                meta = WindowMeta(
+                    start_frame=start,
+                    end_frame=end,
+                    poly_time_min=poly_time,
+                    frame_rate_hz=frame_rate,
+                    label=target_label,
+                    track_index=track_index,
+                    track_length=positions.shape[0],
+                    window_size=window,
+                    majority_fraction=majority_fraction,
+                    label_switches=switch_count,
+                )
+
+                if self._maybe_store_window(feature_vec.tolist(), target_label, meta):
+                    windows_taken += 1
+
+                if max_per_track and windows_taken >= max_per_track:
+                    break
             if max_per_track and windows_taken >= max_per_track:
                 break
 
@@ -406,23 +462,30 @@ class RandomForestTrainer:
         kurtosis = float(np.mean(centered**4) - 3.0)
         return skewness, kurtosis
 
-    def _derive_window_label(self, labels: Sequence[DiffusionLabel]) -> DiffusionLabel:
+    def _summarize_window_labels(
+        self, labels: Sequence[DiffusionLabel]
+    ) -> Optional[Tuple[DiffusionLabel, float, int]]:
+        if not labels:
+            return None
+
         label_counts = Counter(labels)
         most_common = label_counts.most_common()
         if not most_common:
-            return "unknown"
+            return None
 
-        # Mehrheitssieger mit Tie-Breaker auf zentrale Frame-Label
         top_count = most_common[0][1]
         tied = [lab for lab, cnt in most_common if cnt == top_count]
+
         if len(tied) == 1:
-            return tied[0]
+            winner = tied[0]
+        else:
+            center_label = labels[len(labels) // 2]
+            winner = center_label if center_label in tied else tied[0]
 
-        center_label = labels[len(labels) // 2]
-        if center_label in tied:
-            return center_label
+        majority_fraction = top_count / float(len(labels))
+        label_switches = sum(1 for i in range(1, len(labels)) if labels[i] != labels[i - 1])
 
-        return tied[0]
+        return winner, majority_fraction, label_switches
 
     def _ensure_model_fitted(self) -> None:
         if not self.features:
@@ -496,6 +559,9 @@ class RandomForestTrainer:
             "frame_rate_hz",
             "track_index",
             "track_length",
+            "window_size",
+            "majority_fraction",
+            "label_switches",
         ]
 
         with open(feature_path, "w", newline="", encoding="utf-8") as f:
@@ -510,6 +576,9 @@ class RandomForestTrainer:
                     meta.frame_rate_hz,
                     meta.track_index,
                     meta.track_length,
+                    meta.window_size,
+                    round(meta.majority_fraction, 4),
+                    meta.label_switches,
                 ])
 
         return str(feature_path)
@@ -576,9 +645,16 @@ class RandomForestTrainer:
                         )
 
         window_counts_by_poly = Counter()
+        window_counts_by_size = Counter()
+        label_switch_hist = Counter()
         for meta in self.sample_meta:
             key = "unknown" if meta.poly_time_min is None else str(meta.poly_time_min)
             window_counts_by_poly[key] += 1
+            window_counts_by_size[meta.window_size] += 1
+            label_switch_hist[meta.label_switches] += 1
+
+        majority_fractions = [meta.majority_fraction for meta in self.sample_meta]
+        avg_majority_fraction = float(np.mean(majority_fractions)) if majority_fractions else None
 
         return {
             "samples": len(self.features),
@@ -596,6 +672,9 @@ class RandomForestTrainer:
             "windows_seen_per_class": dict(self._class_seen_counts),
             "windows_kept_per_class": dict(self._class_kept_counts),
             "window_counts_by_poly": dict(window_counts_by_poly),
+            "window_counts_by_size": dict(window_counts_by_size),
+            "label_switch_histogram": dict(label_switch_hist),
+            "mean_majority_fraction": avg_majority_fraction,
             "frame_label_counts": dict(self._frame_label_counts),
         }
 

@@ -27,7 +27,6 @@ from scipy import stats
 import warnings
 import tempfile
 import shutil
-import json
 
 from tiff_simulator_v3 import DetectorPreset
 from batch_simulator import BatchSimulator
@@ -112,15 +111,20 @@ class PolygradEstimator:
 
             # Extrahiere Positionen
             positions = []
+            include_z = False
             for detection in particle.findall('detection'):
                 x = float(detection.attrib['x'])
                 y = float(detection.attrib['y'])
-                positions.append([x, y])
+                z = float(detection.attrib.get('z', 0.0))
+                if abs(z) > 1e-6:
+                    include_z = True
+                positions.append([x, y, z])
 
             positions = np.array(positions)
 
             # Berechne MSD
-            D = self._estimate_D_from_trajectory(positions, dt)
+            dims = 3 if include_z else 2
+            D = self._estimate_D_from_trajectory(positions, dt, dims)
 
             if D > 0 and not np.isnan(D) and not np.isinf(D):
                 D_values.append(D)
@@ -171,14 +175,16 @@ class PolygradEstimator:
         self,
         positions: np.ndarray,
         dt: float,
+        dimensions: int,
         max_tau: int = 10
     ) -> float:
         """
         Schätzt D aus einer einzelnen Trajektorie via MSD.
 
         Args:
-            positions: (N, 2) array mit [x, y] Positionen
+            positions: (N, 3) array mit [x, y, z] Positionen
             dt: Zeit pro Frame (Sekunden)
+            dimensions: Dimensionalität (2 oder 3)
             max_tau: Maximales τ für MSD-Berechnung
 
         Returns:
@@ -189,7 +195,6 @@ class PolygradEstimator:
         if N < 4:
             return np.nan
 
-        # MSD für verschiedene τ
         max_tau = min(max_tau, N // 4)
 
         msds = []
@@ -206,20 +211,19 @@ class PolygradEstimator:
         msds = np.array(msds)
         taus = np.array(taus)
 
-        # Linear fit: MSD = 4*D*τ (für 2D Diffusion)
-        # D = slope / 4
+        coeff = max(1, int(dimensions)) * 2.0
         try:
             slope, intercept, r_value, p_value, std_err = stats.linregress(taus, msds)
-            D = slope / 4.0  # 2D Diffusion
+            D = slope / coeff
 
-            # Validierung
-            if D <= 0 or r_value**2 < 0.5:  # Schlechter Fit
+            if D <= 0 or r_value**2 < 0.5:
                 return np.nan
 
             return D
 
-        except:
+        except Exception:
             return np.nan
+
 
 
 def quick_train_adaptive_rf(
@@ -275,91 +279,85 @@ def quick_train_adaptive_rf(
 
     # Temporäres Verzeichnis für TIFFs
     temp_dir = Path(tempfile.mkdtemp(prefix="adaptive_rf_"))
+    trainer: Optional[RandomForestTrainer] = None
 
     try:
-        # Batch-Simulation mit 2 TIFFs (je ~n_tracks_total/2 Spots)
+        rf_config = {
+            'window_sizes': (32, 48, 64),
+            'window_size': 48,
+            'step_size': 0,
+            'step_size_fraction': 0.5,
+            'n_estimators': 1024,
+            'max_depth': 18,
+            'min_samples_leaf': 5,
+            'min_samples_split': 10,
+            'random_state': 42,
+            'max_samples': 0.9,
+            'max_windows_per_class': 80_000,
+            'min_majority_fraction': 0.7,
+            'max_label_switches': 1,
+            'auto_balance_training': False,
+        }
         batch = BatchSimulator(
             output_dir=str(temp_dir),
-            enable_rf=False  # RF trainieren wir selbst
+            enable_rf=True,
+            rf_config=rf_config,
         )
 
-        # 2 TIFFs für Variation (gleicher Polygrad)
-        num_spots = n_tracks_total // 2
-
-        for i in range(2):
-            batch.add_task({
-                'detector': detector,
-                'mode': 'polyzeit',
-                't_poly_min': estimate.t_poly_min,
-                'filename': f'train_t{estimate.t_poly_min:.0f}_rep{i+1}.tif',
-                'image_size': (128, 128),
-                'num_spots': num_spots,
-                'num_frames': 200,
-                'frame_rate_hz': frame_rate_hz
-            })
+        offsets = [-20.0, 0.0, 20.0]
+        t_poly_values = sorted({min(180.0, max(0.0, estimate.t_poly_min + delta)) for delta in offsets})
+        spots_per_type = max(24, int(n_tracks_total / max(1, len(t_poly_values) * 4)))
+        num_frames = 224
 
         if verbose:
-            print(f"   → Generiere 2 TIFFs mit je {num_spots} Tracks...")
+            print(f"   → Plane Balanced-RF-Training (Fenster: {rf_config['window_sizes']})")
+            print(f"   → Polymerisationszeiten für Training: {t_poly_values}")
 
-        batch.run()
-
-        if verbose:
-            print(f"   ✓ TIFFs generiert in {temp_dir}")
-
-        # Schritt 3: RF Training
-        if verbose:
-            print(f"\n🌲 Schritt 3: RF Quick-Training...")
-
-        # Quick Config
-        config = RFTrainingConfig(
-            window_size=48,
-            step_size=32,
-            n_estimators=512,  # Weniger Bäume (4x schneller als 2048)
-            max_depth=15,      # Kleiner (schneller)
-            min_samples_leaf=5,
-            min_samples_split=10,
-            random_state=42
+        batch.add_balanced_rf_training_set(
+            detector=detector,
+            t_poly_series=t_poly_values,
+            num_frames=num_frames,
+            spots_per_type=spots_per_type,
+            frame_rate_hz=frame_rate_hz,
         )
 
-        trainer = RandomForestTrainer(output_dir=temp_dir, config=config)
+        mixed_filename = f"adaptive_mixed_t{int(round(estimate.t_poly_min))}min.tif"
+        batch.add_task({
+            'detector': detector,
+            'mode': 'polyzeit',
+            't_poly_min': estimate.t_poly_min,
+            'filename': mixed_filename,
+            'image_size': (128, 128),
+            'num_spots': max(spots_per_type, 24),
+            'num_frames': num_frames,
+            'frame_rate_hz': frame_rate_hz,
+            'trajectory_options': {
+                'enable_switching': True,
+                'max_switches': None,
+            },
+        })
 
-        # Lade Metadaten und trainiere
-        metadata_files = list(temp_dir.glob("*_metadata.json"))
+        stats = batch.run()
+        trainer = batch.rf_trainer
+        rf_result = stats.get('rf', {})
+        model_path = rf_result.get('model_path')
 
         if verbose:
-            print(f"   → Lade {len(metadata_files)} Metadaten-Dateien...")
+            samples = rf_result.get('samples', 0)
+            oob = rf_result.get('oob_score')
+            print(f"   ✓ RF-Training Samples: {samples}")
+            if oob is not None:
+                print(f"   OOB-Score: {oob:.3f}")
+            if model_path:
+                print(f"   Modell gespeichert: {Path(model_path).name}")
 
-        for meta_file in metadata_files:
-            with open(meta_file, 'r') as f:
-                metadata = json.load(f)
-                trainer.update_with_metadata(metadata)
-
-        if verbose:
-            print(f"   → Finalisiere RF-Training...")
-
-        # Finalize & Train
-        result = trainer.finalize()
-
-        if verbose:
-            print(f"\n✅ RF Training abgeschlossen!")
-            print(f"   Modell: {config.n_estimators} Bäume, max_depth={config.max_depth}")
-            print(f"   Features: 27")
-            if result.get('model_path'):
-                print(f"   Modell gespeichert: {Path(result['model_path']).name}")
-
-        # Kopiere Modell zu output_dir
-        if output_dir and result.get('model_path'):
+        if output_dir and model_path:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
-
-            # Ziel-Pfad
-            model_path = output_dir / f"rf_adaptive_t{estimate.t_poly_min:.0f}min.joblib"
-
-            # Kopiere von temp_dir zu output_dir
-            shutil.copy(result['model_path'], model_path)
-
+            target_path = output_dir / f"rf_adaptive_t{estimate.t_poly_min:.0f}min.joblib"
+            shutil.copy(model_path, target_path)
             if verbose:
-                print(f"   Kopiert nach: {model_path.name}")
+                print(f"   Kopiert nach: {target_path.name}")
 
     finally:
         # Cleanup

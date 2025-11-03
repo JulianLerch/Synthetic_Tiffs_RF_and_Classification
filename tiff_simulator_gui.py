@@ -125,15 +125,19 @@ class TIFFSimulatorGUI:
         self.batch_custom_times = tk.StringVar(value="")  # e.g. 10,30,60
         self.batch_astig = tk.BooleanVar(value=False)
         self.batch_train_rf = tk.BooleanVar(value=False)
-        self.batch_rf_window = tk.IntVar(value=48)
-        self.batch_rf_step = tk.IntVar(value=16)
+        self.batch_rf_window_sizes = tk.StringVar(value="32,48,64")
+        self.batch_rf_step = tk.IntVar(value=0)
+        self.batch_rf_step_fraction = tk.DoubleVar(value=0.5)
         self.batch_rf_estimators = tk.IntVar(value=1024)
-        self.batch_rf_max_depth = tk.IntVar(value=28)
-        self.batch_rf_min_leaf = tk.IntVar(value=3)
-        self.batch_rf_min_split = tk.IntVar(value=6)
-        self.batch_rf_max_samples = tk.DoubleVar(value=0.85)
-        self.batch_rf_max_windows_per_class = tk.IntVar(value=100_000)
-        self.batch_rf_max_windows_per_track = tk.IntVar(value=600)
+        self.batch_rf_max_depth = tk.IntVar(value=18)
+        self.batch_rf_min_leaf = tk.IntVar(value=5)
+        self.batch_rf_min_split = tk.IntVar(value=10)
+        self.batch_rf_max_samples = tk.DoubleVar(value=0.9)
+        self.batch_rf_max_windows_per_class = tk.IntVar(value=80_000)
+        self.batch_rf_max_windows_per_track = tk.IntVar(value=800)
+        self.batch_rf_min_majority = tk.DoubleVar(value=0.7)
+        self.batch_rf_max_switches = tk.IntVar(value=1)
+        self.batch_rf_auto_balance = tk.BooleanVar(value=True)
 
         # Export-Optionen
         self.export_metadata = tk.BooleanVar(value=True)
@@ -566,13 +570,19 @@ class TIFFSimulatorGUI:
 
         row_rf1 = tk.Frame(rf_frame)
         row_rf1.pack(fill=tk.X, pady=2)
-        tk.Label(row_rf1, text="Fenstergröße (Frames):", width=28, anchor=tk.W).pack(side=tk.LEFT)
-        spin_window = ttk.Spinbox(row_rf1, from_=10, to=600, increment=2, textvariable=self.batch_rf_window, width=8)
-        spin_window.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_window)
+        tk.Label(row_rf1, text="Fenstergrößen (Frames):", width=28, anchor=tk.W).pack(side=tk.LEFT)
+        entry_windows = tk.Entry(row_rf1, textvariable=self.batch_rf_window_sizes, width=18)
+        entry_windows.pack(side=tk.LEFT, padx=5)
+        self.rf_option_widgets.append(entry_windows)
 
-        tk.Label(row_rf1, text="Schrittweite:", width=15, anchor=tk.W).pack(side=tk.LEFT)
-        spin_step = ttk.Spinbox(row_rf1, from_=1, to=300, increment=1, textvariable=self.batch_rf_step, width=8)
+        tk.Label(row_rf1, text="Schrittfaktor (0-1):", width=20, anchor=tk.W).pack(side=tk.LEFT)
+        spin_step_frac = ttk.Spinbox(row_rf1, from_=0.1, to=1.0, increment=0.05, format="%.2f",
+                                     textvariable=self.batch_rf_step_fraction, width=6)
+        spin_step_frac.pack(side=tk.LEFT, padx=5)
+        self.rf_option_widgets.append(spin_step_frac)
+
+        tk.Label(row_rf1, text="Fixe Schrittweite (0=auto):", width=22, anchor=tk.W).pack(side=tk.LEFT)
+        spin_step = ttk.Spinbox(row_rf1, from_=0, to=300, increment=1, textvariable=self.batch_rf_step, width=6)
         spin_step.pack(side=tk.LEFT, padx=5)
         self.rf_option_widgets.append(spin_step)
 
@@ -613,6 +623,24 @@ class TIFFSimulatorGUI:
                                      textvariable=self.batch_rf_max_windows_per_class, width=10)
         spin_class_cap.pack(side=tk.LEFT, padx=5)
         self.rf_option_widgets.append(spin_class_cap)
+
+        row_rf5 = tk.Frame(rf_frame)
+        row_rf5.pack(fill=tk.X, pady=2)
+        tk.Label(row_rf5, text="Min. Mehrheitsanteil:", width=28, anchor=tk.W).pack(side=tk.LEFT)
+        spin_majority = ttk.Spinbox(row_rf5, from_=0.5, to=0.95, increment=0.05, format="%.2f",
+                                     textvariable=self.batch_rf_min_majority, width=6)
+        spin_majority.pack(side=tk.LEFT, padx=5)
+        self.rf_option_widgets.append(spin_majority)
+
+        tk.Label(row_rf5, text="Max. Switches/Fenster:", width=22, anchor=tk.W).pack(side=tk.LEFT)
+        spin_switch = ttk.Spinbox(row_rf5, from_=0, to=5, increment=1, textvariable=self.batch_rf_max_switches, width=6)
+        spin_switch.pack(side=tk.LEFT, padx=5)
+        self.rf_option_widgets.append(spin_switch)
+
+        auto_balance_btn = ttk.Checkbutton(row_rf5, text="Automatisch balancierte Trainings-TIFFs",
+                                           variable=self.batch_rf_auto_balance)
+        auto_balance_btn.pack(side=tk.LEFT, padx=10)
+        self.rf_option_widgets.append(auto_balance_btn)
 
         row_rf5 = tk.Frame(rf_frame)
         row_rf5.pack(fill=tk.X, pady=2)
@@ -710,12 +738,34 @@ class TIFFSimulatorGUI:
         else:
             max_samples = min(1.0, float(max_samples))
 
+        window_sizes = []
+        for part in self.batch_rf_window_sizes.get().split(','):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                window_sizes.append(int(part))
+            except ValueError:
+                continue
+        if not window_sizes:
+            window_sizes = [48]
+
+        window_sizes = sorted({max(3, int(abs(w))) for w in window_sizes})
+        primary_window = window_sizes[len(window_sizes) // 2]
+
+        step_fraction = self.batch_rf_step_fraction.get()
+        if step_fraction <= 0:
+            step_fraction = 0.5
+        step_fraction = min(1.0, max(0.05, float(step_fraction)))
+
         return {
             'enable_rf': True,
             'rf_config': {
-                'window_size': max(5, self.batch_rf_window.get()),
-                'step_size': max(1, self.batch_rf_step.get()),
-                'n_estimators': max(100, self.batch_rf_estimators.get()),
+                'window_size': primary_window,
+                'window_sizes': tuple(window_sizes),
+                'step_size': max(0, self.batch_rf_step.get()),
+                'step_size_fraction': step_fraction,
+                'n_estimators': max(256, self.batch_rf_estimators.get()),
                 'max_depth': max_depth,
                 'min_samples_leaf': max(1, self.batch_rf_min_leaf.get()),
                 'min_samples_split': max(2, self.batch_rf_min_split.get()),
@@ -723,6 +773,9 @@ class TIFFSimulatorGUI:
                 'max_samples': max_samples,
                 'max_windows_per_class': max(0, self.batch_rf_max_windows_per_class.get()),
                 'max_windows_per_track': max(0, self.batch_rf_max_windows_per_track.get()),
+                'min_majority_fraction': max(0.5, min(0.95, float(self.batch_rf_min_majority.get()))),
+                'max_label_switches': max(0, self.batch_rf_max_switches.get()),
+                'auto_balance_training': bool(self.batch_rf_auto_balance.get()),
             }
         }
         
