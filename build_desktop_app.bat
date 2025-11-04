@@ -29,16 +29,24 @@ echo    (Dies kann einige Minuten dauern...)
 echo.
 python -m PyInstaller build_app.spec
 
-REM Check if build was successful
-if exist "dist\TIFF_Simulator_V4.exe" (
+REM Check if build was successful (support legacy V4 + new V4.1 names)
+if exist "dist\TIFF_Simulator_V4.1.exe" (
     echo.
     echo ✅ Build successful!
     echo.
-    echo 📦 Application location: dist\TIFF_Simulator_V4.exe
+    echo 📦 Application location: dist\TIFF_Simulator_V4.1.exe
     echo    File size: ~150-200 MB
     echo.
     echo 🚀 You can now run the application without Python installed!
-    echo    Simply double-click: dist\TIFF_Simulator_V4.exe
+    echo    Simply double-click: dist\TIFF_Simulator_V4.1.exe
+    echo.
+) else if exist "dist\TIFF_Simulator_V4.1\" (
+    echo.
+    echo ✅ Build successful!
+    echo.
+    echo 📦 Application location: dist\TIFF_Simulator_V4.1\
+    echo.
+    echo 🚀 To run: dist\TIFF_Simulator_V4.1\TIFF_Simulator_V4.1.exe
     echo.
 ) else if exist "dist\TIFF_Simulator_V4\" (
     echo.
@@ -56,6 +64,7 @@ if exist "dist\TIFF_Simulator_V4.exe" (
     echo    1. Ensure all dependencies are installed: pip install -r requirements.txt
     echo    2. Try running manually: python -m PyInstaller build_app.spec
     echo    3. Check if tiff_simulator_gui_v4.py exists
+    echo    4. Prüfe, ob dist\TIFF_Simulator_V4.1.exe erstellt wurde
     echo.
     pause
     exit /b 1

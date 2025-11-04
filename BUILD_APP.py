@@ -39,6 +39,7 @@ required_files = [
     'batch_simulator.py',
     'track_analysis.py',
     'rf_trainer.py',
+    'rf_training_session.py',
     'adaptive_rf_trainer.py',
     'diffusion_label_utils.py',
     'build_app.spec',
