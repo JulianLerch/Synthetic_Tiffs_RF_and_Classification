@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import json
@@ -20,7 +20,7 @@ class RFTrainingSessionConfig:
     """Configuration for a standalone RF training session."""
 
     output_dir: str = "./rf_training_session"
-    detector: object = TDI_PRESET
+    detector: object = field(default_factory=lambda: replace(TDI_PRESET))
     polymerization_times: Sequence[float] = (0.0, 45.0, 90.0)
     diffusion_types: Sequence[str] = field(default_factory=lambda: list(DIFFUSION_TYPES_DEFAULT))
     frames_per_track: Sequence[int] = (96,)
