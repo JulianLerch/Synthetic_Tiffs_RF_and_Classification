@@ -39,6 +39,8 @@ matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
+from adaptive_rf_trainer import PolygradEstimator
+
 
 DiffusionLabel = str
 
@@ -274,12 +276,102 @@ class MultiScaleWindowAnalyzer:
         """
         # Lade trainiertes Modell
         model_data = load(str(model_path))
-        self.rf_model = model_data["model"]
+        self.model_data = model_data
+
+        models_dict = model_data.get("models") or {}
+        base_model = model_data.get("model")
+        if not models_dict and base_model is not None:
+            models_dict = {"combined": base_model}
+        elif base_model is not None and "combined" not in models_dict:
+            models_dict["combined"] = base_model
+
+        if not models_dict:
+            raise ValueError("RF-Modell enthält keine Modelle.")
+
+        self.models = models_dict
+        self.model_index = model_data.get("model_index", {}) or {}
+        self.default_model_key = model_data.get("default_model_key") or next(iter(models_dict.keys()))
+        self.rf_model = models_dict.get(self.default_model_key)
         self.feature_names_trained = model_data.get("feature_names", self.FEATURE_NAMES)
 
-        # Window-Konfiguration
-        self.window_sizes = window_sizes or [30, 48, 64, 96]
-        self.min_segment_length = 30  # Minimum für Glättung
+        config = model_data.get("config", {}) or {}
+        self.training_mode = config.get("training_mode", "window")
+        self.training_mode = (self.training_mode or "window").lower()
+        if self.training_mode not in {"window", "track"}:
+            self.training_mode = "window"
+        self.uses_track_model = self.training_mode == "track"
+
+        trained_windows = config.get("window_sizes") or []
+        if not trained_windows and config.get("window_size"):
+            trained_windows = [config.get("window_size")]
+
+        if window_sizes:
+            derived_windows = [int(w) for w in window_sizes if int(w) > 0]
+        elif trained_windows:
+            derived_windows = [int(w) for w in trained_windows if int(w) > 0]
+        else:
+            derived_windows = [30, 48, 64, 96]
+
+        derived_windows = sorted({max(3, int(abs(w))) for w in derived_windows})
+        self.window_sizes = derived_windows
+
+        self.fixed_step_size = config.get("step_size")
+        self.step_size_fraction = config.get("step_size_fraction", None)
+        if self.step_size_fraction is None or self.step_size_fraction <= 0:
+            self.step_size_fraction = 0.5
+
+        self.min_segment_length_factor = config.get("min_segment_length_factor", 0.75)
+        if not self.min_segment_length_factor or self.min_segment_length_factor <= 0:
+            self.min_segment_length_factor = 0.75
+
+        self.min_majority_fraction = config.get("min_majority_fraction", 0.7)
+        self.keep_probability_threshold = max(0.5, min(0.95, self.min_majority_fraction - 0.05))
+
+        smallest_window = min(self.window_sizes) if self.window_sizes else 30
+        self.min_segment_length = max(3, int(round(smallest_window * self.min_segment_length_factor)))
+
+        self.class_labels = []
+        self.default_label = "subdiffusion"
+        self.set_poly_time_hint(None)
+
+    def set_poly_time_hint(self, poly_time_min: Optional[float]) -> str:
+        key = self._select_model_key(poly_time_min)
+        model = self.models.get(key)
+        if model is None:
+            key = self.default_model_key
+            model = self.models[key]
+
+        self.active_model_key = key
+        self.rf_model = model
+        self.class_labels = list(getattr(self.rf_model, "classes_", []))
+        if not self.class_labels:
+            self.class_labels = ["subdiffusion", "normal", "confined", "superdiffusion"]
+        self.default_label = self.class_labels[0]
+        self.active_poly_time = poly_time_min
+        return key
+
+    def _select_model_key(self, poly_time_min: Optional[float]) -> str:
+        if not self.models:
+            return self.default_model_key
+
+        if poly_time_min is None:
+            return self.default_model_key
+
+        best_key = self.default_model_key
+        best_diff = float("inf")
+        for key, meta in self.model_index.items():
+            poly_val = meta.get("poly_time_min")
+            if poly_val is None:
+                continue
+            try:
+                diff = abs(float(poly_val) - float(poly_time_min))
+            except Exception:
+                continue
+            if diff < best_diff:
+                best_diff = diff
+                best_key = key
+
+        return best_key
 
     def analyze_track(self, track: Track, frame_rate_hz: float = 20.0) -> TrackAnalysis:
         """Analysiere einen kompletten Track mit Multi-Scale Windows."""
@@ -287,14 +379,27 @@ class MultiScaleWindowAnalyzer:
         positions = track.get_positions()
         frames = track.get_frames()
 
+        if self.uses_track_model:
+            return self._analyze_track_level(track, positions, frames, frame_rate_hz)
+
         # 1. Multi-Scale Prediction
         frame_predictions = self._multi_scale_classification(positions, frames)
+        frame_predictions = self._prepare_frame_probabilities(frame_predictions, len(frames))
 
         # 2. Glätte Predictions (min_segment_length)
-        smoothed_labels = self._smooth_predictions(frame_predictions, self.min_segment_length)
+        smoothed_labels, frame_label_probabilities = self._smooth_predictions(
+            frame_predictions,
+            len(frames)
+        )
 
         # 3. Finde Segmente (zusammenhängende Label-Regionen)
-        segments = self._extract_segments(positions, frames, smoothed_labels, frame_rate_hz)
+        segments = self._extract_segments(
+            positions,
+            frames,
+            smoothed_labels,
+            frame_rate_hz,
+            frame_label_probabilities,
+        )
 
         # 4. Berechne Statistiken
         diffusion_distribution = Counter(smoothed_labels.values())
@@ -319,6 +424,103 @@ class MultiScaleWindowAnalyzer:
             mean_alpha_per_type=mean_alpha
         )
 
+    def _analyze_track_level(
+        self,
+        track: Track,
+        positions: np.ndarray,
+        frames: np.ndarray,
+        frame_rate_hz: float,
+    ) -> TrackAnalysis:
+        features = self._compute_features(positions)
+        if features is None:
+            features = np.zeros(len(self.FEATURE_NAMES), dtype=np.float32)
+
+        try:
+            proba = self.rf_model.predict_proba([features])[0]
+            classes = list(self.rf_model.classes_)
+        except Exception:
+            classes = self.class_labels
+            proba = np.zeros(len(classes), dtype=float)
+
+        if len(proba) == 0:
+            predicted_label = self.default_label
+            predicted_prob = 0.0
+        else:
+            best_idx = int(np.argmax(proba))
+            predicted_label = classes[best_idx]
+            predicted_prob = float(proba[best_idx])
+
+        frame_labels = {int(f): predicted_label for f in frames}
+
+        msd_slope, D_value = self._compute_msd_and_D(positions, frame_rate_hz)
+
+        segment = ClassifiedSegment(
+            start_frame=int(frames[0]) if frames.size else 0,
+            end_frame=int(frames[-1]) if frames.size else 0,
+            diffusion_type=predicted_label,
+            probability=predicted_prob,
+            msd_slope=msd_slope,
+            D_value=D_value,
+            segment_length=int(frames.size),
+        )
+
+        diffusion_distribution = {predicted_label: int(frames.size)}
+        mean_D_per_type = {predicted_label: D_value}
+        mean_alpha_per_type = {predicted_label: msd_slope}
+
+        return TrackAnalysis(
+            track_id=track.track_id,
+            track_length=len(track),
+            segments=[segment],
+            frame_labels=frame_labels,
+            diffusion_distribution=diffusion_distribution,
+            mean_D_per_type=mean_D_per_type,
+            mean_alpha_per_type=mean_alpha_per_type,
+        )
+
+    def _step_for_window(self, window_size: int) -> int:
+        if self.fixed_step_size and self.fixed_step_size > 0:
+            return max(1, min(int(window_size), int(self.fixed_step_size)))
+        fraction = self.step_size_fraction if self.step_size_fraction and self.step_size_fraction > 0 else 0.5
+        return max(1, int(round(window_size * fraction)))
+
+    def _prepare_frame_probabilities(
+        self,
+        frame_predictions: Dict[int, Dict[str, float]],
+        total_frames: int,
+    ) -> Dict[int, Dict[str, float]]:
+        if not frame_predictions:
+            return {i: {self.default_label: 1.0} for i in range(total_frames)}
+
+        counts = Counter()
+        for probs in frame_predictions.values():
+            if probs:
+                best_label = max(probs.items(), key=lambda x: x[1])[0]
+                counts[best_label] += 1
+
+        fallback_label = counts.most_common(1)[0][0] if counts else self.default_label
+
+        normalized = {}
+        for frame_idx in range(total_frames):
+            probs = frame_predictions.get(frame_idx)
+            if not probs:
+                normalized[frame_idx] = {fallback_label: 1.0}
+                continue
+
+            clean = {label: max(0.0, float(value)) for label, value in probs.items() if value is not None}
+            total = sum(clean.values())
+            if total <= 0:
+                normalized[frame_idx] = {fallback_label: 1.0}
+                continue
+
+            normalized_probs = {label: value / total for label, value in clean.items()}
+            # ensure fallback exists for stability
+            if fallback_label not in normalized_probs:
+                normalized_probs[fallback_label] = 0.0
+            normalized[frame_idx] = normalized_probs
+
+        return normalized
+
     def _multi_scale_classification(self, positions: np.ndarray,
                                    frames: np.ndarray) -> Dict[int, Dict[str, float]]:
         """
@@ -330,11 +532,15 @@ class MultiScaleWindowAnalyzer:
             Für jeden Frame: Wahrscheinlichkeiten aller Labels (über alle Window-Größen aggregiert)
         """
 
-        frame_votes = defaultdict(lambda: defaultdict(list))  # frame → label → [probabilities]
+        frame_votes = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0]))  # frame → label → [sum_prob, total_weight]
 
         # Iteriere über alle Window-Größen
         for window_size in self.window_sizes:
-            step_size = window_size // 2  # 50% Overlap
+            if positions.shape[0] < window_size:
+                continue
+
+            step_size = self._step_for_window(window_size)
+            weight = float(window_size)
 
             for start in range(0, len(positions) - window_size + 1, step_size):
                 end = start + window_size
@@ -353,18 +559,26 @@ class MultiScaleWindowAnalyzer:
                 # Addiere Votes für alle Frames in diesem Window
                 for frame_idx in range(start, end):
                     for label, prob in zip(predicted_classes, proba):
-                        frame_votes[frame_idx][label].append(prob)
+                        vote_entry = frame_votes[frame_idx][label]
+                        vote_entry[0] += float(prob) * weight
+                        vote_entry[1] += weight
 
         # Aggregiere: Mittlere Wahrscheinlichkeit über alle Windows
         frame_predictions = {}
         for frame_idx, label_probs in frame_votes.items():
-            aggregated = {label: np.mean(probs) for label, probs in label_probs.items()}
+            aggregated = {}
+            for label, (prob_sum, total_weight) in label_probs.items():
+                if total_weight > 0:
+                    aggregated[label] = prob_sum / total_weight
             frame_predictions[frame_idx] = aggregated
 
         return frame_predictions
 
-    def _smooth_predictions(self, frame_predictions: Dict[int, Dict[str, float]],
-                           min_length: int) -> Dict[int, DiffusionLabel]:
+    def _smooth_predictions(
+        self,
+        frame_predictions: Dict[int, Dict[str, float]],
+        total_frames: int,
+    ) -> Tuple[Dict[int, DiffusionLabel], Dict[int, float]]:
         """
         Glätte Predictions mit min_segment_length.
 
@@ -373,8 +587,12 @@ class MultiScaleWindowAnalyzer:
 
         # 1. Wähle wahrscheinlichstes Label pro Frame
         raw_labels = {}
-        for frame_idx, probs in sorted(frame_predictions.items()):
-            best_label = max(probs.items(), key=lambda x: x[1])[0]
+        for frame_idx in range(total_frames):
+            probs = frame_predictions.get(frame_idx, {})
+            if probs:
+                best_label = max(probs.items(), key=lambda x: x[1])[0]
+            else:
+                best_label = self.default_label
             raw_labels[frame_idx] = best_label
 
         # 2. Finde Segmente
@@ -382,8 +600,8 @@ class MultiScaleWindowAnalyzer:
         current_label = None
         current_start = None
 
-        for frame_idx in sorted(raw_labels.keys()):
-            label = raw_labels[frame_idx]
+        for frame_idx in range(total_frames):
+            label = raw_labels.get(frame_idx, self.default_label)
 
             if label != current_label:
                 if current_label is not None:
@@ -399,23 +617,29 @@ class MultiScaleWindowAnalyzer:
         smoothed_segments = []
         for i, (start, end, label) in enumerate(segments):
             length = end - start + 1
+            probs = [frame_predictions.get(idx, {}).get(label, 0.0) for idx in range(start, end + 1)]
+            avg_prob = float(np.mean(probs)) if probs else 0.0
 
-            if length < min_length:
-                # Kurzes Segment → ersetze durch wahrscheinlicheren Nachbarn
-                prev_label = segments[i-1][2] if i > 0 else None
-                next_label = segments[i+1][2] if i < len(segments) - 1 else None
+            if length < self.min_segment_length and avg_prob < self.keep_probability_threshold:
+                prev_label = segments[i - 1][2] if i > 0 else None
+                next_label = segments[i + 1][2] if i < len(segments) - 1 else None
 
-                # Wähle häufigeren Nachbarn
-                if prev_label == next_label and prev_label is not None:
-                    new_label = prev_label
-                elif prev_label is not None:
-                    new_label = prev_label
-                elif next_label is not None:
-                    new_label = next_label
+                candidates = []
+                if prev_label is not None:
+                    prev_probs = [frame_predictions.get(idx, {}).get(prev_label, 0.0) for idx in range(start, end + 1)]
+                    candidates.append((float(np.mean(prev_probs)) if prev_probs else 0.0, prev_label))
+                if next_label is not None:
+                    next_probs = [frame_predictions.get(idx, {}).get(next_label, 0.0) for idx in range(start, end + 1)]
+                    candidates.append((float(np.mean(next_probs)) if next_probs else 0.0, next_label))
+
+                if candidates:
+                    best_label = max(candidates, key=lambda x: x[0])[1]
+                elif avg_prob >= self.keep_probability_threshold:
+                    best_label = label
                 else:
-                    new_label = label  # Behalte Original
+                    best_label = self.default_label
 
-                smoothed_segments.append((start, end, new_label))
+                smoothed_segments.append((start, end, best_label))
             else:
                 smoothed_segments.append((start, end, label))
 
@@ -430,15 +654,18 @@ class MultiScaleWindowAnalyzer:
 
         # 5. Konvertiere zu frame → label mapping
         smoothed_labels = {}
+        frame_confidences = {}
         for start, end, label in merged:
             for frame_idx in range(start, end + 1):
                 smoothed_labels[frame_idx] = label
+                frame_confidences[frame_idx] = frame_predictions.get(frame_idx, {}).get(label, 0.0)
 
-        return smoothed_labels
+        return smoothed_labels, frame_confidences
 
     def _extract_segments(self, positions: np.ndarray, frames: np.ndarray,
                          frame_labels: Dict[int, DiffusionLabel],
-                         frame_rate_hz: float) -> List[ClassifiedSegment]:
+                         frame_rate_hz: float,
+                         frame_label_probabilities: Dict[int, float]) -> List[ClassifiedSegment]:
         """Extrahiere klassifizierte Segmente mit MSD/D Berechnung."""
 
         segments = []
@@ -446,20 +673,24 @@ class MultiScaleWindowAnalyzer:
         current_start = None
         current_indices = []
 
+        export_min_length = max(6, self.min_segment_length // 2)
+
         for i, frame_idx in enumerate(frames):
-            label = frame_labels.get(i, "unknown")
+            label = frame_labels.get(i, self.default_label)
 
             if label != current_label:
                 # Speichere vorheriges Segment
-                if current_label is not None and len(current_indices) >= 10:
+                if current_label is not None and len(current_indices) >= export_min_length:
                     seg_positions = positions[current_indices]
                     msd_slope, D_value = self._compute_msd_and_D(seg_positions, frame_rate_hz)
+                    probs = [frame_label_probabilities.get(idx, 0.0) for idx in current_indices]
+                    avg_prob = float(np.mean(probs)) if probs else 0.0
 
                     segments.append(ClassifiedSegment(
                         start_frame=int(frames[current_start]),
                         end_frame=int(frames[current_indices[-1]]),
                         diffusion_type=current_label,
-                        probability=1.0,  # Nach Smoothing
+                        probability=avg_prob,
                         msd_slope=msd_slope,
                         D_value=D_value,
                         segment_length=len(current_indices)
@@ -473,15 +704,17 @@ class MultiScaleWindowAnalyzer:
                 current_indices.append(i)
 
         # Letztes Segment
-        if current_label is not None and len(current_indices) >= 10:
+        if current_label is not None and len(current_indices) >= export_min_length:
             seg_positions = positions[current_indices]
             msd_slope, D_value = self._compute_msd_and_D(seg_positions, frame_rate_hz)
+            probs = [frame_label_probabilities.get(idx, 0.0) for idx in current_indices]
+            avg_prob = float(np.mean(probs)) if probs else 0.0
 
             segments.append(ClassifiedSegment(
                 start_frame=int(frames[current_start]),
                 end_frame=int(frames[current_indices[-1]]),
                 diffusion_type=current_label,
-                probability=1.0,
+                probability=avg_prob,
                 msd_slope=msd_slope,
                 D_value=D_value,
                 segment_length=len(current_indices)
@@ -966,6 +1199,20 @@ class TrackAnalysisOrchestrator:
 
         print(f"   ✅ {len(tracks)} Tracks gefunden")
         print(f"   📏 Mean Length: {preview['mean_length']:.1f} Frames")
+
+        poly_hint = None
+        try:
+            estimator = PolygradEstimator()
+            estimate = estimator.estimate_from_xml(xml_path, frame_rate_hz)
+            poly_hint = estimate.t_poly_min
+            print(f"   🧪 Polygrad-Schätzung: t ≈ {poly_hint:.1f} min")
+        except Exception as exc:
+            print(f"   ⚠️ Polygrad-Schätzung fehlgeschlagen: {exc}")
+
+        try:
+            self.analyzer.set_poly_time_hint(poly_hint)
+        except Exception as exc:
+            print(f"   ⚠️ Modellwechsel nicht möglich: {exc}")
 
         # 2. Analysiere jeden Track
         print("   Klassifiziere Tracks...")

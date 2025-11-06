@@ -15,7 +15,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, NamedTuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, NamedTuple
 import random
 
 import json
@@ -43,7 +43,9 @@ class RFTrainingConfig:
     """
 
     window_size: int = 48
-    step_size: int = 32       # OPTIMIERT: Weniger Overlap (war 16)
+    window_sizes: Tuple[int, ...] = (32, 48, 64)
+    step_size: Optional[int] = None
+    step_size_fraction: float = 0.5
     n_estimators: int = 2048  # OPTIMIERT: Mehr Bäume (war 1024)
     max_depth: Optional[int] = 20      # OPTIMIERT: Konservativer (war 28)
     min_samples_leaf: int = 5          # OPTIMIERT: Stärker regularisiert (war 3)
@@ -56,9 +58,48 @@ class RFTrainingConfig:
     max_samples: Optional[float] = 0.85
     max_windows_per_class: Optional[int] = 100_000
     max_windows_per_track: Optional[int] = 600
+    min_majority_fraction: float = 0.7
+    max_label_switches: int = 1
+    min_segment_length_factor: float = 0.75
+    training_mode: str = "window"  # "window" oder "track"
+    polygrade_strategy: str = "combined"  # "combined", "per_grade", "auto"
+
+    def __post_init__(self) -> None:
+        sizes = self.window_sizes or (self.window_size,)
+        normalized = sorted({int(max(3, s)) for s in sizes})
+        if not normalized:
+            normalized = [max(3, int(self.window_size))]
+        if self.window_size not in normalized:
+            normalized.append(int(self.window_size))
+            normalized = sorted({int(max(3, s)) for s in normalized})
+        self.window_sizes = tuple(normalized)
+
+        mode = (self.training_mode or "window").strip().lower()
+        if mode not in {"window", "track"}:
+            mode = "window"
+        self.training_mode = mode
+
+        strategy = (self.polygrade_strategy or "combined").strip().lower()
+        if strategy not in {"combined", "per_grade", "auto"}:
+            strategy = "combined"
+        self.polygrade_strategy = strategy
+
+    @property
+    def smallest_window(self) -> int:
+        return int(self.window_sizes[0])
+
+    def iter_windows(self) -> Iterable[int]:
+        for size in self.window_sizes:
+            yield int(size)
+
+    def step_for_window(self, window: int) -> int:
+        if self.step_size is not None and self.step_size > 0:
+            return max(1, min(int(window), int(self.step_size)))
+        frac = max(0.05, float(self.step_size_fraction or 0.5))
+        return max(1, int(round(window * frac)))
 
 
-class WindowMeta(NamedTuple):
+class SampleMeta(NamedTuple):
     start_frame: int
     end_frame: int
     poly_time_min: Optional[float]
@@ -66,6 +107,10 @@ class WindowMeta(NamedTuple):
     label: DiffusionLabel
     track_index: int
     track_length: int
+    window_size: int
+    majority_fraction: float
+    label_switches: int
+    sample_type: str
 
 
 class RandomForestTrainer:
@@ -108,14 +153,17 @@ class RandomForestTrainer:
 
         self.features: List[List[float]] = []
         self.labels: List[DiffusionLabel] = []
-        self.sample_meta: List[WindowMeta] = []
+        self.sample_meta: List[SampleMeta] = []
         self.model: Optional[RandomForestClassifier] = None
+        self.models_per_grade: Dict[str, RandomForestClassifier] = {}
         self._feature_matrix: Optional[np.ndarray] = None
         self._needs_fit: bool = False
         self._class_seen_counts: Counter = Counter()
         self._class_kept_counts: Counter = Counter()
         self._class_indices: Dict[DiffusionLabel, List[int]] = defaultdict(list)
         self._frame_label_counts: Counter = Counter()
+        self._polygrade_indices: Dict[str, List[int]] = defaultdict(list)
+        self._polygrade_values: Dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -132,9 +180,11 @@ class RandomForestTrainer:
 
         initial_count = len(self.features)
 
+        min_required = self.config.smallest_window if self.config.training_mode == "window" else 3
+
         for track_idx, traj in enumerate(trajectories):
             positions = np.asarray(traj.get("positions"))
-            if positions.ndim != 2 or positions.shape[0] < self.config.window_size:
+            if positions.ndim != 2 or positions.shape[0] < min_required:
                 continue
 
             labels = expand_labels(
@@ -145,7 +195,7 @@ class RandomForestTrainer:
 
             self._frame_label_counts.update(labels)
 
-            self._collect_windows(
+            self._collect_samples(
                 positions,
                 labels,
                 poly_time=poly_time,
@@ -183,11 +233,28 @@ class RandomForestTrainer:
             }
 
         model_path = self.output_dir / "random_forest_diffusion.joblib"
-        dump({
+        models_dict: Dict[str, RandomForestClassifier] = {"combined": self.model}
+        models_dict.update(self.models_per_grade)
+
+        model_index = {"combined": {"type": "combined", "poly_time_min": None}}
+        for key, model in self.models_per_grade.items():
+            model_index[key] = {
+                "type": "polygrade",
+                "poly_time_min": self._polygrade_values.get(key),
+                "classes": list(getattr(model, "classes_", [])),
+            }
+
+        artifact = {
             "model": self.model,
+            "models": models_dict,
+            "default_model_key": "combined",
+            "model_index": model_index,
             "feature_names": list(self.FEATURE_NAMES),
             "config": asdict(self.config),
-        }, model_path)
+            "polygrade_values": dict(self._polygrade_values),
+        }
+
+        dump(artifact, model_path)
 
         feature_path = self._export_feature_table()
         metrics = self._collect_training_metrics()
@@ -206,6 +273,32 @@ class RandomForestTrainer:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+    def _collect_samples(
+        self,
+        positions: np.ndarray,
+        labels: Sequence[DiffusionLabel],
+        *,
+        poly_time: Optional[float],
+        frame_rate: Optional[float],
+        track_index: int,
+    ) -> None:
+        if self.config.training_mode == "track":
+            self._collect_track_sample(
+                positions,
+                labels,
+                poly_time=poly_time,
+                frame_rate=frame_rate,
+                track_index=track_index,
+            )
+        else:
+            self._collect_windows(
+                positions,
+                labels,
+                poly_time=poly_time,
+                frame_rate=frame_rate,
+                track_index=track_index,
+            )
+
     def _collect_windows(
         self,
         positions: np.ndarray,
@@ -215,34 +308,57 @@ class RandomForestTrainer:
         frame_rate: Optional[float],
         track_index: int,
     ) -> None:
-        window = self.config.window_size
-        step = max(1, self.config.step_size)
         max_per_track = self.config.max_windows_per_track or 0
         windows_taken = 0
 
-        for start in range(0, positions.shape[0] - window + 1, step):
-            end = start + window
-            window_pos = positions[start:end]
-            window_labels = labels[start:end]
-
-            feature_vec = self._compute_features(window_pos)
-            if feature_vec is None:
+        for window in self.config.iter_windows():
+            if positions.shape[0] < window:
                 continue
 
-            target_label = self._derive_window_label(window_labels)
+            step = self.config.step_for_window(window)
 
-            meta = WindowMeta(
-                start_frame=start,
-                end_frame=end,
-                poly_time_min=poly_time,
-                frame_rate_hz=frame_rate,
-                label=target_label,
-                track_index=track_index,
-                track_length=positions.shape[0],
-            )
+            for start in range(0, positions.shape[0] - window + 1, step):
+                end = start + window
+                window_pos = positions[start:end]
+                window_labels = labels[start:end]
 
-            if self._maybe_store_window(feature_vec.tolist(), target_label, meta):
-                windows_taken += 1
+                feature_vec = self._compute_features(window_pos)
+                if feature_vec is None:
+                    continue
+
+                label_summary = self._summarize_window_labels(window_labels)
+                if label_summary is None:
+                    continue
+
+                target_label, majority_fraction, switch_count = label_summary
+
+                if majority_fraction < self.config.min_majority_fraction:
+                    continue
+                if (
+                    self.config.max_label_switches is not None
+                    and switch_count > self.config.max_label_switches
+                ):
+                    continue
+
+                meta = SampleMeta(
+                    start_frame=start,
+                    end_frame=end,
+                    poly_time_min=poly_time,
+                    frame_rate_hz=frame_rate,
+                    label=target_label,
+                    track_index=track_index,
+                    track_length=positions.shape[0],
+                    window_size=window,
+                    majority_fraction=majority_fraction,
+                    label_switches=switch_count,
+                    sample_type="window",
+                )
+
+                if self._maybe_store_sample(feature_vec.tolist(), target_label, meta):
+                    windows_taken += 1
+
+                if max_per_track and windows_taken >= max_per_track:
+                    break
             if max_per_track and windows_taken >= max_per_track:
                 break
 
@@ -333,6 +449,49 @@ class RandomForestTrainer:
 
         return feature_values
 
+    def _collect_track_sample(
+        self,
+        positions: np.ndarray,
+        labels: Sequence[DiffusionLabel],
+        *,
+        poly_time: Optional[float],
+        frame_rate: Optional[float],
+        track_index: int,
+    ) -> None:
+        feature_vec = self._compute_features(positions)
+        if feature_vec is None:
+            return
+
+        label_summary = self._summarize_window_labels(labels)
+        if label_summary is None:
+            return
+
+        target_label, majority_fraction, switch_count = label_summary
+
+        if majority_fraction < self.config.min_majority_fraction:
+            return
+        if (
+            self.config.max_label_switches is not None
+            and switch_count > self.config.max_label_switches
+        ):
+            return
+
+        meta = SampleMeta(
+            start_frame=0,
+            end_frame=positions.shape[0],
+            poly_time_min=poly_time,
+            frame_rate_hz=frame_rate,
+            label=target_label,
+            track_index=track_index,
+            track_length=positions.shape[0],
+            window_size=positions.shape[0],
+            majority_fraction=majority_fraction,
+            label_switches=switch_count,
+            sample_type="track",
+        )
+
+        self._maybe_store_sample(feature_vec.tolist(), target_label, meta)
+
     def _compute_turning_angles(self, step_vectors: np.ndarray) -> np.ndarray:
         if step_vectors.shape[0] < 2:
             return np.array([], dtype=np.float32)
@@ -406,36 +565,72 @@ class RandomForestTrainer:
         kurtosis = float(np.mean(centered**4) - 3.0)
         return skewness, kurtosis
 
-    def _derive_window_label(self, labels: Sequence[DiffusionLabel]) -> DiffusionLabel:
+    def _summarize_window_labels(
+        self, labels: Sequence[DiffusionLabel]
+    ) -> Optional[Tuple[DiffusionLabel, float, int]]:
+        if not labels:
+            return None
+
         label_counts = Counter(labels)
         most_common = label_counts.most_common()
         if not most_common:
-            return "unknown"
+            return None
 
-        # Mehrheitssieger mit Tie-Breaker auf zentrale Frame-Label
         top_count = most_common[0][1]
         tied = [lab for lab, cnt in most_common if cnt == top_count]
+
         if len(tied) == 1:
-            return tied[0]
+            winner = tied[0]
+        else:
+            center_label = labels[len(labels) // 2]
+            winner = center_label if center_label in tied else tied[0]
 
-        center_label = labels[len(labels) // 2]
-        if center_label in tied:
-            return center_label
+        majority_fraction = top_count / float(len(labels))
+        label_switches = sum(1 for i in range(1, len(labels)) if labels[i] != labels[i - 1])
 
-        return tied[0]
+        return winner, majority_fraction, label_switches
 
     def _ensure_model_fitted(self) -> None:
         if not self.features:
             return
 
         if self.model is None or self._needs_fit:
-            self._fit_model()
+            self._fit_models()
             self._needs_fit = False
 
-    def _fit_model(self) -> None:
+    def _fit_models(self) -> None:
         X = np.asarray(self.features, dtype=np.float32)
         y = np.array(self.labels)
 
+        self.model = self._train_single_model(X, y)
+        self._feature_matrix = X
+
+        self.models_per_grade = {}
+
+        strategy = self.config.polygrade_strategy
+        polygrade_keys = list(self._polygrade_indices.keys())
+        if not polygrade_keys:
+            return
+
+        if strategy == "combined":
+            return
+
+        if strategy == "auto":
+            if len(polygrade_keys) < 2:
+                return
+
+        for key in polygrade_keys:
+            indices = self._polygrade_indices.get(key) or []
+            if len(indices) < max(20, self.config.min_samples_leaf * 10):
+                continue
+            idx_arr = np.array(indices, dtype=int)
+            X_subset = X[idx_arr]
+            y_subset = y[idx_arr]
+            if len(np.unique(y_subset)) < 2:
+                continue
+            self.models_per_grade[key] = self._train_single_model(X_subset, y_subset)
+
+    def _train_single_model(self, X: np.ndarray, y: np.ndarray) -> RandomForestClassifier:
         rf_kwargs = dict(
             n_estimators=self.config.n_estimators,
             max_depth=self.config.max_depth,
@@ -450,15 +645,15 @@ class RandomForestTrainer:
             max_samples=self.config.max_samples,
         )
 
-        self.model = RandomForestClassifier(**rf_kwargs)
-        self.model.fit(X, y)
-        self._feature_matrix = X
+        model = RandomForestClassifier(**rf_kwargs)
+        model.fit(X, y)
+        return model
 
-    def _maybe_store_window(
+    def _maybe_store_sample(
         self,
         feature_vec: List[float],
         label: DiffusionLabel,
-        meta: WindowMeta,
+        meta: SampleMeta,
     ) -> bool:
         limit = self.config.max_windows_per_class or 0
         self._class_seen_counts[label] += 1
@@ -470,6 +665,7 @@ class RandomForestTrainer:
             self.sample_meta.append(meta)
             self._class_indices[label].append(idx)
             self._class_kept_counts[label] += 1
+            self._assign_polygrade_index(idx, meta.poly_time_min)
             self._needs_fit = True
             self._feature_matrix = None
             return True
@@ -481,11 +677,31 @@ class RandomForestTrainer:
             self.features[replace_idx] = feature_vec
             self.labels[replace_idx] = label
             self.sample_meta[replace_idx] = meta
+            self._assign_polygrade_index(replace_idx, meta.poly_time_min)
             self._needs_fit = True
             self._feature_matrix = None
             return True
 
         return False
+
+    def _assign_polygrade_index(self, idx: int, poly_time: Optional[float]) -> None:
+        for key, indices in list(self._polygrade_indices.items()):
+            if idx in indices:
+                indices.remove(idx)
+            if not indices:
+                self._polygrade_indices.pop(key, None)
+
+        key = self._polygrade_key(poly_time)
+        if key:
+            self._polygrade_indices[key].append(idx)
+            if poly_time is not None:
+                self._polygrade_values[key] = float(poly_time)
+
+    def _polygrade_key(self, poly_time: Optional[float]) -> Optional[str]:
+        if poly_time is None:
+            return None
+        rounded = round(float(poly_time), 3)
+        return f"poly_{rounded:.3f}"
 
     def _export_feature_table(self) -> str:
         feature_path = self.output_dir / "rf_training_features.csv"
@@ -496,6 +712,10 @@ class RandomForestTrainer:
             "frame_rate_hz",
             "track_index",
             "track_length",
+            "window_size",
+            "sample_type",
+            "majority_fraction",
+            "label_switches",
         ]
 
         with open(feature_path, "w", newline="", encoding="utf-8") as f:
@@ -510,6 +730,10 @@ class RandomForestTrainer:
                     meta.frame_rate_hz,
                     meta.track_index,
                     meta.track_length,
+                    meta.window_size,
+                    meta.sample_type,
+                    round(meta.majority_fraction, 4),
+                    meta.label_switches,
                 ])
 
         return str(feature_path)
@@ -576,9 +800,25 @@ class RandomForestTrainer:
                         )
 
         window_counts_by_poly = Counter()
+        window_counts_by_size = Counter()
+        label_switch_hist = Counter()
         for meta in self.sample_meta:
             key = "unknown" if meta.poly_time_min is None else str(meta.poly_time_min)
             window_counts_by_poly[key] += 1
+            window_counts_by_size[meta.window_size] += 1
+            label_switch_hist[meta.label_switches] += 1
+
+        majority_fractions = [meta.majority_fraction for meta in self.sample_meta]
+        avg_majority_fraction = float(np.mean(majority_fractions)) if majority_fractions else None
+
+        polygrade_summary = {
+            key: {
+                "poly_time_min": self._polygrade_values.get(key),
+                "samples": len(indices),
+                "model_trained": key in self.models_per_grade,
+            }
+            for key, indices in self._polygrade_indices.items()
+        }
 
         return {
             "samples": len(self.features),
@@ -596,7 +836,11 @@ class RandomForestTrainer:
             "windows_seen_per_class": dict(self._class_seen_counts),
             "windows_kept_per_class": dict(self._class_kept_counts),
             "window_counts_by_poly": dict(window_counts_by_poly),
+            "window_counts_by_size": dict(window_counts_by_size),
+            "label_switch_histogram": dict(label_switch_hist),
+            "mean_majority_fraction": avg_majority_fraction,
             "frame_label_counts": dict(self._frame_label_counts),
+            "polygrade_models": polygrade_summary,
         }
 
     def _export_training_summary(self, model_path: Path, feature_path: str, metrics: Dict) -> str:

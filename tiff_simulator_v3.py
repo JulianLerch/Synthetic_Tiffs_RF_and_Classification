@@ -616,12 +616,14 @@ class TrajectoryGenerator:
 
     def __init__(self, D_initial: float, t_poly_min: float,
                  frame_rate_hz: float, pixel_size_um: float,
-                 enable_switching: bool = True):
+                 enable_switching: bool = True,
+                 base_switch_prob: float = 0.01):
         self.D_initial = D_initial
         self.t_poly_min = t_poly_min
         self.dt = 1.0 / frame_rate_hz
         self.pixel_size_um = pixel_size_um
         self.enable_switching = enable_switching
+        self._base_switch_prob = float(base_switch_prob)
 
         # Hole Diffusionsfraktionen
         self.fractions = get_diffusion_fractions(t_poly_min)
@@ -636,14 +638,24 @@ class TrajectoryGenerator:
         if enable_switching:
             self.switcher = DiffusionSwitcher(
                 t_poly_min=t_poly_min,
-                base_switch_prob=0.01  # 1% pro Frame
+                base_switch_prob=self._base_switch_prob  # 1% pro Frame
             )
         else:
             self.switcher = None
 
+    def _create_switcher(self) -> Optional['DiffusionSwitcher']:
+        if not self.enable_switching:
+            return None
+        return DiffusionSwitcher(
+            t_poly_min=self.t_poly_min,
+            base_switch_prob=self._base_switch_prob
+        )
+
     def generate_trajectory(self, start_pos: Tuple[float, float, float],
                            num_frames: int,
-                           diffusion_type: str = "normal") -> Tuple[np.ndarray, List[Dict]]:
+                           diffusion_type: str = "normal",
+                           switcher: Optional['DiffusionSwitcher'] = None,
+                           max_switches: Optional[int] = None) -> Tuple[np.ndarray, List[Dict]]:
         """
         Generiert eine 3D-Trajektorie mit ANISOTROPER Diffusion und
         DYNAMISCHEM SWITCHING zwischen Diffusionsarten.
@@ -680,6 +692,8 @@ class TrajectoryGenerator:
         trajectory = np.zeros((num_frames, 3), dtype=np.float32)
         trajectory[0] = start_pos
         switch_log = []
+        active_switcher = switcher if switcher is not None else self.switcher
+        performed_switches = 0
 
         # z-Diffusion ist DEUTLICH LANGSAMER!
         # Typisch: Faktor 5-10 langsamer als lateral
@@ -687,8 +701,8 @@ class TrajectoryGenerator:
 
         for i in range(1, num_frames):
             # NEU: Prüfe ob Switch erfolgt (nur wenn Switcher aktiviert)
-            if self.switcher is not None and self.switcher.should_switch(current_type):
-                new_type = self.switcher.get_new_type(current_type, self.fractions)
+            if active_switcher is not None and active_switcher.should_switch(current_type):
+                new_type = active_switcher.get_new_type(current_type, self.fractions)
                 if new_type != current_type:
                     # Logge Switch
                     switch_log.append({
@@ -697,6 +711,9 @@ class TrajectoryGenerator:
                         "to": new_type
                     })
                     current_type = new_type
+                    performed_switches += 1
+                    if max_switches is not None and performed_switches >= max_switches:
+                        active_switcher = None
 
             # Verwende aktuellen Typ für diesen Frame
             D = self.D_values[current_type]
@@ -733,7 +750,11 @@ class TrajectoryGenerator:
         return trajectory, switch_log
 
     def generate_multi_trajectory(self, num_spots: int, num_frames: int,
-                                  image_size: Tuple[int, int]) -> List[Dict]:
+                                  image_size: Tuple[int, int],
+                                  force_diffusion_type: Optional[str] = None,
+                                  per_type_counts: Optional[Dict[str, int]] = None,
+                                  enable_switching: Optional[bool] = None,
+                                  max_switches: Optional[int] = None) -> List[Dict]:
         """
         Generiert mehrere Trajektorien mit verschiedenen Diffusionstypen
         und dynamischem Switching.
@@ -751,12 +772,29 @@ class TrajectoryGenerator:
         height, width = image_size
         trajectories = []
 
-        for _ in range(num_spots):
-            # Wähle initialen Diffusionstyp
-            dtype = np.random.choice(
-                list(self.fractions.keys()),
-                p=list(self.fractions.values())
-            )
+        allow_switching = self.enable_switching if enable_switching is None else enable_switching
+
+        if per_type_counts:
+            generation_plan = []
+            for dtype, count in per_type_counts.items():
+                if count <= 0:
+                    continue
+                generation_plan.extend([dtype] * int(count))
+        else:
+            generation_plan = []
+            for _ in range(num_spots):
+                if force_diffusion_type:
+                    dtype = force_diffusion_type
+                else:
+                    dtype = np.random.choice(
+                        list(self.fractions.keys()),
+                        p=list(self.fractions.values())
+                    )
+                generation_plan.append(dtype)
+
+        for dtype in generation_plan:
+            if dtype not in self.D_values:
+                dtype = "normal"
 
             # Zufällige Startposition
             start_x = np.random.uniform(0.2 * width, 0.8 * width) * self.pixel_size_um
@@ -764,16 +802,19 @@ class TrajectoryGenerator:
             start_z = np.random.uniform(-0.5, 0.5)
 
             # Generiere Trajektorie MIT Switch-Log
+            switcher = self._create_switcher() if allow_switching else None
             trajectory, switch_log = self.generate_trajectory(
                 (start_x, start_y, start_z),
                 num_frames,
-                dtype
+                dtype,
+                switcher=switcher,
+                max_switches=max_switches
             )
 
             trajectories.append({
                 "positions": trajectory,
                 "diffusion_type": dtype,  # Initialer Typ
-                "D_value": self.D_values[dtype],
+                "D_value": self.D_values.get(dtype, self.D_initial),
                 "switch_log": switch_log,  # NEU: Alle Switches
                 "num_switches": len(switch_log)  # NEU: Anzahl Switches
             })
@@ -787,7 +828,9 @@ class TrajectoryGenerator:
             "t_poly_min": self.t_poly_min,
             "frame_rate_hz": 1.0 / self.dt,
             "diffusion_fractions": self.fractions,
-            "D_values": self.D_values
+            "D_values": self.D_values,
+            "enable_switching": bool(self.enable_switching),
+            "base_switch_prob": float(self._base_switch_prob),
         }
 
 
@@ -933,6 +976,7 @@ class TIFFSimulatorOptimized:
                      d_initial: float = 0.5,
                      exposure_substeps: int = 1,
                      enable_photophysics: bool = False,
+                     trajectory_options: Optional[Dict[str, object]] = None,
                      progress_callback: Optional[Callable[[int, int, str], None]] = None) -> np.ndarray:
         """
         Generiert TIFF-Stack (OPTIMIERT).
@@ -949,12 +993,28 @@ class TIFFSimulatorOptimized:
 
         height, width = image_size
 
+        # Trajektorien-Optionen
+        traj_options = trajectory_options or {}
+        per_type_counts = traj_options.get("per_type_counts")
+        if per_type_counts:
+            try:
+                num_spots_effective = int(sum(int(v) for v in per_type_counts.values()))
+            except Exception:
+                num_spots_effective = int(num_spots)
+        else:
+            num_spots_effective = int(num_spots)
+
+        enable_switching_override = traj_options.get("enable_switching")
+        max_switches = traj_options.get("max_switches")
+        force_diffusion_type = traj_options.get("force_diffusion_type")
+
         # Initialisiere Trajektorien-Generator
         traj_gen = TrajectoryGenerator(
             D_initial=float(d_initial),
             t_poly_min=self.t_poly_min,
             frame_rate_hz=frame_rate_hz,
-            pixel_size_um=self.detector.pixel_size_um
+            pixel_size_um=self.detector.pixel_size_um,
+            enable_switching=bool(traj_options.get("enable_switching", True))
         )
 
         # Generiere Trajektorien
@@ -962,7 +1022,13 @@ class TIFFSimulatorOptimized:
             progress_callback(0, num_frames, "Generiere Trajektorien...")
 
         trajectories = traj_gen.generate_multi_trajectory(
-            num_spots, num_frames, image_size
+            num_spots_effective,
+            num_frames,
+            image_size,
+            force_diffusion_type=force_diffusion_type,
+            per_type_counts=per_type_counts,
+            enable_switching=enable_switching_override,
+            max_switches=max_switches
         )
 
         # Detector-Parameter
@@ -981,13 +1047,13 @@ class TIFFSimulatorOptimized:
             if progress_callback:
                 progress_callback(0, num_frames, "Berechne Photophysik (Blinking/Bleaching)...")
             phot = PhotoPhysics(on_mean, off_mean, bleach_p)
-            on_mask = phot.generate_on_mask(num_spots, num_frames)
+            on_mask = phot.generate_on_mask(num_spots_effective, num_frames)
         else:
-            on_mask = np.ones((num_spots, num_frames), dtype=bool)
+            on_mask = np.ones((num_spots_effective, num_frames), dtype=bool)
 
         # Spot-Intensitäten (Lognormal)
         base_intensities = self.detector.max_intensity * np.exp(
-            np.random.normal(0.0, spot_sigma, size=num_spots)
+            np.random.normal(0.0, spot_sigma, size=num_spots_effective)
         ).astype(np.float32)
 
         # Initialisiere TIFF-Stack
@@ -1104,10 +1170,21 @@ class TIFFSimulatorOptimized:
         diffusion_meta["realized_frame_counts"] = realized_frame_counts
         diffusion_meta["realized_total_frames"] = int(total_realized_frames)
 
+        def _convert_for_metadata(value):
+            if isinstance(value, (int, float, str, bool)) or value is None:
+                return value
+            if isinstance(value, dict):
+                return {str(k): _convert_for_metadata(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple, set)):
+                return [_convert_for_metadata(v) for v in value]
+            return str(value)
+
         # Update Metadata
         self.metadata.update({
             "image_size": image_size,
-            "num_spots": num_spots,
+            "num_spots_requested": int(num_spots),
+            "num_spots_simulated": int(num_spots_effective),
+            "num_spots": int(num_spots_effective),
             "num_frames": num_frames,
             "frame_rate_hz": frame_rate_hz,
             "d_initial": float(d_initial),
@@ -1116,6 +1193,7 @@ class TIFFSimulatorOptimized:
             "trajectories": trajectories,
             "psf": self.psf_gen.get_metadata(),
             "diffusion": diffusion_meta,
+            "trajectory_options": _convert_for_metadata(traj_options),
         })
 
         return tiff_stack

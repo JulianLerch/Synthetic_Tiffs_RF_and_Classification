@@ -16,7 +16,7 @@ Version: 3.0 - Oktober 2025
 
 import numpy as np
 from pathlib import Path
-from typing import List, Dict, Callable, Tuple
+from typing import List, Dict, Callable, Tuple, Sequence
 from datetime import datetime
 import json
 from tqdm import tqdm
@@ -67,8 +67,12 @@ class BatchSimulator:
 
         self.rf_enabled = bool(enable_rf)
         self.rf_trainer = None
+        self.rf_auto_balance = True
+        self._balanced_training_added = False
         if self.rf_enabled:
-            config = self._create_rf_config(rf_config)
+            rf_cfg = dict(rf_config or {})
+            self.rf_auto_balance = bool(rf_cfg.pop('auto_balance_training', True))
+            config = self._create_rf_config(rf_cfg)
             self.rf_trainer = RandomForestTrainer(self.output_dir, config)
 
         # Statistik
@@ -283,6 +287,50 @@ class BatchSimulator:
         }
         
         self.add_task(task)
+
+    def add_balanced_rf_training_set(
+        self,
+        detector=TDI_PRESET,
+        t_poly_series: Sequence[float] = (0.0, 45.0, 90.0),
+        num_frames: int = 192,
+        spots_per_type: int = 48,
+        frame_rate_hz: float = 20.0,
+        image_size: Tuple[int, int] = (128, 128),
+        enable_photophysics: bool = False,
+    ) -> None:
+        """Plan balanced Training TIFFs (eine pro Diffusionstyp & Polymerisationszeit).
+
+        Jede Kombination aus Zeit und Diffusionstyp erzeugt einen eigenen TIFF,
+        bei dem Switching deaktiviert wird. Dadurch entstehen homogene Segmente
+        für das RF-Training.
+        """
+
+        diffusion_types = ["normal", "subdiffusion", "confined", "superdiffusion"]
+
+        for t_poly in t_poly_series:
+            for dtype in diffusion_types:
+                filename = (
+                    f"rf_balanced_{detector.name.lower()}_{dtype}_t{int(round(t_poly))}min.tif"
+                )
+
+                task = {
+                    'detector': detector,
+                    'mode': 'rf_balanced',
+                    't_poly_min': float(t_poly),
+                    'filename': filename,
+                    'image_size': image_size,
+                    'num_spots': spots_per_type,
+                    'num_frames': num_frames,
+                    'frame_rate_hz': frame_rate_hz,
+                    'enable_photophysics': enable_photophysics,
+                    'trajectory_options': {
+                        'force_diffusion_type': dtype,
+                        'enable_switching': False,
+                        'max_switches': 0,
+                    },
+                }
+
+                self.add_task(task)
     
     def run(self, progress_callback: Callable = None) -> Dict:
         """
@@ -307,9 +355,12 @@ class BatchSimulator:
         print(f"Anzahl Tasks: {len(self.tasks)}")
         print(f"Output Dir: {self.output_dir}")
         print(f"=" * 70)
-        
+
         self.stats['start_time'] = datetime.now()
-        
+
+        if self.rf_enabled and self.rf_auto_balance:
+            self._ensure_balanced_rf_tasks()
+
         # Fortschrittsbalken mit tqdm
         for idx, task in enumerate(tqdm(self.tasks, desc="Simulationen")):
             try:
@@ -347,9 +398,9 @@ class BatchSimulator:
 
         # Speichere Batch-Statistik
         self._save_batch_stats()
-        
+
         return self.stats
-    
+
     def _run_single_task(self, task: Dict) -> None:
         """Führt eine einzelne Simulation aus."""
         
@@ -374,7 +425,11 @@ class BatchSimulator:
                 image_size=task['image_size'],
                 num_spots=task['num_spots'],
                 num_frames=task['num_frames'],
-                frame_rate_hz=task['frame_rate_hz']
+                frame_rate_hz=task['frame_rate_hz'],
+                d_initial=task.get('d_initial', 0.5),
+                exposure_substeps=task.get('exposure_substeps', 1),
+                enable_photophysics=task.get('enable_photophysics', False),
+                trajectory_options=task.get('trajectory_options')
             )
         
         # Speichere TIFF
@@ -388,6 +443,43 @@ class BatchSimulator:
 
         if self.rf_trainer:
             self.rf_trainer.update_with_metadata(metadata)
+
+    def _ensure_balanced_rf_tasks(self) -> None:
+        if self._balanced_training_added:
+            return
+
+        if any(task.get('mode') == 'rf_balanced' for task in self.tasks):
+            self._balanced_training_added = True
+            return
+
+        base_task = self.tasks[0] if self.tasks else {}
+        detector = base_task.get('detector', TDI_PRESET)
+        image_size = base_task.get('image_size', (128, 128))
+        num_frames = max(192, int(base_task.get('num_frames', 192)))
+        frame_rate = float(base_task.get('frame_rate_hz', 20.0))
+        spots = int(base_task.get('num_spots', 48))
+        enable_photophysics = bool(base_task.get('enable_photophysics', False))
+
+        times = sorted({float(task.get('t_poly_min', 60.0)) for task in self.tasks if 't_poly_min' in task})
+        if not times:
+            times = [0.0, 45.0, 90.0]
+        elif len(times) > 3:
+            mid_idx = len(times) // 2
+            times = [times[0], times[mid_idx], times[-1]]
+
+        spots_per_type = max(24, min(96, spots))
+
+        self.add_balanced_rf_training_set(
+            detector=detector,
+            t_poly_series=times,
+            num_frames=num_frames,
+            spots_per_type=spots_per_type,
+            frame_rate_hz=frame_rate,
+            image_size=image_size,
+            enable_photophysics=enable_photophysics,
+        )
+
+        self._balanced_training_added = True
 
     def _print_summary(self) -> None:
         """Druckt Zusammenfassung."""
@@ -630,10 +722,22 @@ def main():
         help='Fenstergröße für Sliding-Window-Features'
     )
     parser.add_argument(
+        '--rf-window-sizes',
+        type=str,
+        default='32,48,64',
+        help='Komma-separierte Liste zusätzlicher Fenstergrößen (Frames)'
+    )
+    parser.add_argument(
         '--rf-step',
         type=int,
         default=16,
         help='Schrittweite zwischen Fenstern'
+    )
+    parser.add_argument(
+        '--rf-step-fraction',
+        type=float,
+        default=0.5,
+        help='Schrittweite relativ zur Fenstergröße (0.0-1.0, 0 deaktiviert)'
     )
     parser.add_argument(
         '--rf-estimators',
@@ -683,6 +787,23 @@ def main():
         default=600,
         help='Maximale Anzahl gespeicherter Sliding-Window-Samples pro Trajektorie'
     )
+    parser.add_argument(
+        '--rf-min-majority',
+        type=float,
+        default=0.7,
+        help='Minimale Mehrheitsfraktion eines Labels pro Fenster (0-1)'
+    )
+    parser.add_argument(
+        '--rf-max-switches',
+        type=int,
+        default=1,
+        help='Maximale Anzahl Labelwechsel innerhalb eines Fensters (<=0 deaktiviert Filter)'
+    )
+    parser.add_argument(
+        '--rf-no-auto-balance',
+        action='store_true',
+        help='Deaktiviert automatische Balanced-RF-Trainingssimulationen'
+    )
 
     args, unknown = parser.parse_known_args()
 
@@ -690,11 +811,29 @@ def main():
     if args.train_rf:
         max_depth = None if args.rf_max_depth is not None and args.rf_max_depth <= 0 else args.rf_max_depth
         max_samples = None if args.rf_max_samples is None or args.rf_max_samples <= 0 else min(1.0, float(args.rf_max_samples))
+        window_sizes = []
+        for part in args.rf_window_sizes.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            try:
+                window_sizes.append(int(part))
+            except ValueError:
+                continue
+        if not window_sizes:
+            window_sizes = [args.rf_window]
+
+        window_sizes = sorted({max(3, int(w)) for w in window_sizes})
+        median_index = len(window_sizes) // 2
+        primary_window = window_sizes[median_index]
+
         batch_kwargs = {
             'enable_rf': True,
             'rf_config': {
-                'window_size': max(5, args.rf_window),
-                'step_size': max(1, args.rf_step),
+                'window_size': primary_window,
+                'window_sizes': tuple(window_sizes),
+                'step_size': max(0, args.rf_step),
+                'step_size_fraction': max(0.0, min(1.0, args.rf_step_fraction)),
                 'n_estimators': max(10, args.rf_estimators),
                 'max_depth': max_depth,
                 'min_samples_leaf': max(1, args.rf_min_leaf),
@@ -703,6 +842,9 @@ def main():
                 'max_samples': max_samples,
                 'max_windows_per_class': max(0, args.rf_max_windows_per_class),
                 'max_windows_per_track': max(0, args.rf_max_windows_per_track),
+                'min_majority_fraction': max(0.5, min(0.95, args.rf_min_majority)),
+                'max_label_switches': max(0, args.rf_max_switches),
+                'auto_balance_training': not args.rf_no_auto_balance,
             }
         }
 

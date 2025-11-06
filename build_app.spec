@@ -19,6 +19,7 @@ a = Analysis(
         # NEW V4.1: Track Analysis & RF Training
         ('track_analysis.py', '.'),
         ('rf_trainer.py', '.'),
+        ('rf_training_session.py', '.'),
         ('adaptive_rf_trainer.py', '.'),
         ('diffusion_label_utils.py', '.'),
 
@@ -61,6 +62,9 @@ a = Analysis(
         'scipy.stats._stats_py',
         'scipy.special',
         'scipy.special._ufuncs',
+
+        # Standalone RF Training Session
+        'rf_training_session',
 
         # Matplotlib (Plotting)
         'matplotlib',

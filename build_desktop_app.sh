@@ -22,13 +22,18 @@ echo ""
 echo "🔨 Building application with PyInstaller..."
 pyinstaller build_app.spec
 
-# Check if build was successful
-if [ -d "dist/TIFF_Simulator_V4" ] || [ -f "dist/TIFF_Simulator_V4.exe" ]; then
+# Check if build was successful (handles V4 and V4.1 artifact names)
+if [ -f "dist/TIFF_Simulator_V4.1.exe" ] || [ -d "dist/TIFF_Simulator_V4.1" ] \
+   || [ -f "dist/TIFF_Simulator_V4.exe" ] || [ -d "dist/TIFF_Simulator_V4" ]; then
     echo ""
     echo "✅ Build successful!"
     echo ""
     echo "📦 Application location:"
-    if [ -d "dist/TIFF_Simulator_V4" ]; then
+    if [ -f "dist/TIFF_Simulator_V4.1.exe" ]; then
+        echo "   dist/TIFF_Simulator_V4.1.exe"
+    elif [ -d "dist/TIFF_Simulator_V4.1" ]; then
+        echo "   dist/TIFF_Simulator_V4.1/"
+    elif [ -d "dist/TIFF_Simulator_V4" ]; then
         echo "   dist/TIFF_Simulator_V4/"
     else
         echo "   dist/TIFF_Simulator_V4.exe"
