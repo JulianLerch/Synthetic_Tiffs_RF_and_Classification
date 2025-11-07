@@ -94,10 +94,16 @@ TDI_PRESET = DetectorPreset(
         "on_mean_frames": 4.0,
         "off_mean_frames": 6.0,
         "bleach_prob_per_frame": 0.002,
-        "z_amp_um": 0.7,
-        "z_max_um": 0.6,
-        "astig_z0_um": 0.5,
-        "astig_coeffs": {"A_x": 1.0, "B_x": 0.0, "A_y": -0.5, "B_y": 0.0}
+        # Z-Stack Kalibrierungs-Parameter
+        "z_amp_um": 0.7,  # Intensitätsabfall-Skala in z [µm] - kleinerer Wert = stärkerer Abfall
+        "z_max_um": 0.6,  # Maximale z-Auslenkung [µm]
+        "astig_z0_um": 0.5,  # Charakteristische Länge für Astigmatismus [µm]
+        "astig_coeffs": {"A_x": 1.0, "B_x": 0.0, "A_y": -0.5, "B_y": 0.0},  # Astigmatismus-Koeffizienten
+        "refractive_index_correction": 1.0,  # Brechungsindex-Korrektur: z_scheinbar = z_tatsächlich * factor
+                                               # Typisch: n_medium/n_immersion (z.B. 1.33/1.518 ≈ 0.876 für Wasser/Öl)
+        # Ausleuchtungsgradient (hyperrealistisch)
+        "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
+        "illumination_gradient_type": "radial"  # "radial", "linear_x", "linear_y", "corner"
     }
 )
 
@@ -120,10 +126,16 @@ TETRASPECS_PRESET = DetectorPreset(
         "on_mean_frames": 5.0,
         "off_mean_frames": 7.0,
         "bleach_prob_per_frame": 0.0015,
-        "z_amp_um": 0.7,
-        "z_max_um": 0.6,
-        "astig_z0_um": 0.5,
-        "astig_coeffs": {"A_x": 1.0, "B_x": 0.0, "A_y": -0.5, "B_y": 0.0}
+        # Z-Stack Kalibrierungs-Parameter
+        "z_amp_um": 0.7,  # Intensitätsabfall-Skala in z [µm] - kleinerer Wert = stärkerer Abfall
+        "z_max_um": 0.6,  # Maximale z-Auslenkung [µm]
+        "astig_z0_um": 0.5,  # Charakteristische Länge für Astigmatismus [µm]
+        "astig_coeffs": {"A_x": 1.0, "B_x": 0.0, "A_y": -0.5, "B_y": 0.0},  # Astigmatismus-Koeffizienten
+        "refractive_index_correction": 1.0,  # Brechungsindex-Korrektur: z_scheinbar = z_tatsächlich * factor
+                                               # Typisch: n_medium/n_immersion (z.B. 1.33/1.518 ≈ 0.876 für Wasser/Öl)
+        # Ausleuchtungsgradient (hyperrealistisch)
+        "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
+        "illumination_gradient_type": "radial"  # "radial", "linear_x", "linear_y", "corner"
     }
 )
 
@@ -498,7 +510,7 @@ class PSFGeneratorOptimized:
         self.sigma_px = fwhm_px / 2.355
         self._sigma_eps = 1e-6
 
-        # Astigmatismus-Parameter
+        # Astigmatismus-Parameter und Brechungsindex-Korrektur
         if astigmatism:
             meta = getattr(detector, 'metadata', {}) or {}
             self.z0_um = float(meta.get("astig_z0_um", 0.5))
@@ -507,6 +519,9 @@ class PSFGeneratorOptimized:
             self.Bx = float(coeffs.get("B_x", 0.0))
             self.Ay = float(coeffs.get("A_y", -0.5))
             self.By = float(coeffs.get("B_y", 0.0))
+            self.refractive_correction = float(meta.get("refractive_index_correction", 1.0))
+        else:
+            self.refractive_correction = 1.0
 
         # Pre-compute grids
         self._coord_grids = {}
@@ -549,7 +564,9 @@ class PSFGeneratorOptimized:
 
         # Berechne alle sigmas auf einmal
         if self.astigmatism:
-            z_norm = z_positions / self.z0_um
+            # Brechungsindex-Korrektur auf z-Positionen anwenden
+            z_corrected = z_positions * self.refractive_correction
+            z_norm = z_corrected / self.z0_um
             term_x = 1.0 + self.Ax * (z_norm**2) + self.Bx * (z_norm**4)
             term_y = 1.0 + self.Ay * (z_norm**2) + self.By * (z_norm**4)
             term_x = np.maximum(term_x, self._sigma_eps)
@@ -839,16 +856,39 @@ class TrajectoryGenerator:
 # ============================================================================
 
 class BackgroundGeneratorOptimized:
-    """Generiert realistischen Background mit Pre-Computing."""
+    """Generiert realistischen Background mit Pre-Computing und optionalem Ausleuchtungsgradienten."""
 
-    def __init__(self, mean: float, std: float):
+    def __init__(self, mean: float, std: float,
+                 illumination_gradient_strength: float = 0.0,
+                 illumination_gradient_type: str = "radial"):
+        """
+        Parameters:
+        -----------
+        mean : float
+            Mittlerer Background [counts]
+        std : float
+            Standardabweichung des Backgrounds [counts]
+        illumination_gradient_strength : float
+            Stärke des Ausleuchtungsgradienten [counts].
+            0.0 = kein Gradient (Standard)
+            5.0-20.0 = subtiler, realistischer Gradient
+            >20.0 = starker Gradient
+        illumination_gradient_type : str
+            Typ des Gradienten:
+            - "radial": Radial von Zentrum nach außen (Standard)
+            - "linear_x": Linear entlang x-Achse
+            - "linear_y": Linear entlang y-Achse
+            - "corner": Gradient von einer Ecke
+        """
         self.mean = mean
         self.std = std
+        self.gradient_strength = illumination_gradient_strength
+        self.gradient_type = illumination_gradient_type
         self._cache = {}
 
     def generate(self, image_size: Tuple[int, int], use_cache: bool = True) -> np.ndarray:
         """
-        Generiert Background-Bild.
+        Generiert Background-Bild mit optionalem Ausleuchtungsgradienten.
 
         Mit Cache für wiederholte Größen (schneller für Batch-Processing).
         """
@@ -868,12 +908,36 @@ class BackgroundGeneratorOptimized:
         noise = np.random.normal(0, self.std, size=(height, width)).astype(np.float32)
         background += noise
 
-        # Leichter Gradient
-        y, x = np.meshgrid(np.linspace(-1, 1, height, dtype=np.float32),
-                          np.linspace(-1, 1, width, dtype=np.float32),
-                          indexing='ij')
-        gradient = 5 * (x**2 + y**2)
-        background += gradient
+        # Ausleuchtungsgradient (hyperrealistisch)
+        if self.gradient_strength > 0:
+            y, x = np.meshgrid(np.linspace(-1, 1, height, dtype=np.float32),
+                              np.linspace(-1, 1, width, dtype=np.float32),
+                              indexing='ij')
+
+            if self.gradient_type == "radial":
+                # Radialer Gradient (Standard): Zentrum heller, Ränder dunkler
+                # Simuliert typische Ausleuchtung bei Mikroskopen
+                r_squared = x**2 + y**2
+                gradient = self.gradient_strength * r_squared
+
+            elif self.gradient_type == "linear_x":
+                # Linearer Gradient entlang x-Achse
+                gradient = self.gradient_strength * (x + 1.0) / 2.0
+
+            elif self.gradient_type == "linear_y":
+                # Linearer Gradient entlang y-Achse
+                gradient = self.gradient_strength * (y + 1.0) / 2.0
+
+            elif self.gradient_type == "corner":
+                # Gradient von Ecke (0,0) nach (max,max)
+                gradient = self.gradient_strength * (x + y + 2.0) / 4.0
+
+            else:
+                # Fallback auf radialen Gradient
+                r_squared = x**2 + y**2
+                gradient = self.gradient_strength * r_squared
+
+            background += gradient
 
         if use_cache:
             self._cache[image_size] = background.copy()
@@ -956,9 +1020,17 @@ class TIFFSimulatorOptimized:
 
         # Initialisiere Generatoren (OPTIMIERT)
         self.psf_gen = PSFGeneratorOptimized(detector, astigmatism)
+
+        # Ausleuchtungsgradient-Parameter aus Metadata
+        meta = detector.metadata or {}
+        gradient_strength = float(meta.get("illumination_gradient_strength", 0.0))
+        gradient_type = str(meta.get("illumination_gradient_type", "radial"))
+
         self.bg_gen = BackgroundGeneratorOptimized(
             detector.background_mean,
-            detector.background_std
+            detector.background_std,
+            illumination_gradient_strength=gradient_strength,
+            illumination_gradient_type=gradient_type
         )
 
         # Metadata
