@@ -181,6 +181,11 @@ class TIFFSimulatorGUI_V4:
         self.astig_z0_um = tk.DoubleVar(value=0.5)
         self.astig_Ax = tk.DoubleVar(value=1.0)
         self.astig_Ay = tk.DoubleVar(value=-0.5)
+        self.refractive_index_correction = tk.DoubleVar(value=1.0)  # NEU: Brechungsindex-Korrektur
+
+        # ===== ILLUMINATION GRADIENT (NEU!) =====
+        self.illumination_gradient_strength = tk.DoubleVar(value=0.0)  # NEU
+        self.illumination_gradient_type = tk.StringVar(value="radial")  # NEU
 
         # ===== Z-STACK =====
         self.z_min = tk.DoubleVar(value=-1.0)
@@ -610,6 +615,29 @@ class TIFFSimulatorGUI_V4:
         read_spin.pack(side=tk.LEFT, padx=5)
         ToolTip(read_spin, "Kamera-Ausleserauschen\nTDI: 1.2, sCMOS: 1.8")
 
+        # ILLUMINATION GRADIENT (NEU!)
+        illum_frame = ttk.LabelFrame(self.physics_tab, text="💡 Ausleuchtungsgradient", padding=10)
+        illum_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        # Gradient Strength
+        grad_strength_frame = tk.Frame(illum_frame)
+        grad_strength_frame.pack(fill=tk.X, pady=2)
+        tk.Label(grad_strength_frame, text="Gradient Stärke [counts]:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        grad_strength_spin = ttk.Spinbox(grad_strength_frame, from_=0.0, to=50.0, increment=1.0,
+                   textvariable=self.illumination_gradient_strength, width=10, format='%.1f')
+        grad_strength_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(grad_strength_spin, "Stärke des Ausleuchtungsgradienten\n0 = aus, 5-20 = subtil, >20 = stark")
+
+        # Gradient Type
+        grad_type_frame = tk.Frame(illum_frame)
+        grad_type_frame.pack(fill=tk.X, pady=2)
+        tk.Label(grad_type_frame, text="Gradient Typ:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        grad_type_combo = ttk.Combobox(grad_type_frame, textvariable=self.illumination_gradient_type,
+                                       values=["radial", "linear_x", "linear_y", "corner"],
+                                       width=10, state="readonly")
+        grad_type_combo.pack(side=tk.LEFT, padx=5)
+        ToolTip(grad_type_combo, "Typ des Gradienten:\nradial = vom Zentrum\nlinear_x/y = entlang Achse\ncorner = von Ecke")
+
     def _create_photophysics_tab(self):
         """Tab für Photophysik (Blinking, Bleaching)."""
 
@@ -749,6 +777,15 @@ class TIFFSimulatorGUI_V4:
                    textvariable=self.astig_Ay, width=10, format='%.2f')
         ay_spin.pack(side=tk.LEFT, padx=5)
         ToolTip(ay_spin, "Astigmatismus y-Koeffizient\n-0.5 = Standard")
+
+        # Brechungsindex-Korrektur (NEU!)
+        ri_frame = tk.Frame(astig_coef_frame)
+        ri_frame.pack(fill=tk.X, pady=2)
+        tk.Label(ri_frame, text="Brechungsindex-Korrektur:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        ri_spin = ttk.Spinbox(ri_frame, from_=0.5, to=1.5, increment=0.01,
+                   textvariable=self.refractive_index_correction, width=10, format='%.3f')
+        ri_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(ri_spin, "Brechungsindex-Korrektur für z-Positionen\n1.0 = keine Korrektur (Standard)\n0.876 = Wasser/Öl-Immersion\n0.91 = Hydrogel/Öl\nKleinerer Wert = kleinere z-Abweichungen")
 
         # z-Stack Parameter
         zstack_frame = ttk.LabelFrame(self.astig_tab, text="📊 z-Stack Kalibrierung", padding=10)
@@ -1634,7 +1671,11 @@ class TIFFSimulatorGUI_V4:
                 "z_max_um": self.z_max_um.get(),
                 "astig_z0_um": self.astig_z0_um.get(),
                 "astig_coeffs": {"A_x": self.astig_Ax.get(), "B_x": 0.0,
-                               "A_y": self.astig_Ay.get(), "B_y": 0.0}
+                               "A_y": self.astig_Ay.get(), "B_y": 0.0},
+                # NEU: Illumination Gradient und Brechungsindex-Korrektur
+                "illumination_gradient_strength": self.illumination_gradient_strength.get(),
+                "illumination_gradient_type": self.illumination_gradient_type.get(),
+                "refractive_index_correction": self.refractive_index_correction.get()
             }
         )
 

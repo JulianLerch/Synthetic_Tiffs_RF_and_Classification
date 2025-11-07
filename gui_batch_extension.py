@@ -455,7 +455,11 @@
                 "z_max_um": self.z_max_um.get(),
                 "astig_z0_um": self.astig_z0_um.get(),
                 "astig_coeffs": {"A_x": self.astig_Ax.get(), "B_x": 0.0,
-                               "A_y": self.astig_Ay.get(), "B_y": 0.0}
+                               "A_y": self.astig_Ay.get(), "B_y": 0.0},
+                # NEU: Illumination Gradient und Brechungsindex-Korrektur
+                "illumination_gradient_strength": self.illumination_gradient_strength.get(),
+                "illumination_gradient_type": self.illumination_gradient_type.get(),
+                "refractive_index_correction": self.refractive_index_correction.get()
             }
         )
 
