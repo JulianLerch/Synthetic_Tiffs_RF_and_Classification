@@ -256,6 +256,9 @@ class RandomForestTrainer:
 
         dump(artifact, model_path)
 
+        # Kopiere RF Usage Guide
+        self._copy_rf_usage_guide()
+
         feature_path = self._export_feature_table()
         metrics = self._collect_training_metrics()
         summary_path = self._export_training_summary(model_path, feature_path, metrics)
@@ -842,6 +845,18 @@ class RandomForestTrainer:
             "frame_label_counts": dict(self._frame_label_counts),
             "polygrade_models": polygrade_summary,
         }
+
+    def _copy_rf_usage_guide(self) -> None:
+        """Kopiert die RF Usage Guide in das Output-Verzeichnis."""
+        try:
+            import shutil
+            source = Path(__file__).parent / "RF_USAGE_GUIDE.md"
+            if source.exists():
+                dest = self.output_dir / "RF_USAGE_GUIDE.md"
+                shutil.copy2(source, dest)
+                print(f"✓ RF Usage Guide kopiert nach: {dest}")
+        except Exception as e:
+            print(f"⚠ Konnte RF Usage Guide nicht kopieren: {e}")
 
     def _export_training_summary(self, model_path: Path, feature_path: str, metrics: Dict) -> str:
         summary = {
