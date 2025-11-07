@@ -181,7 +181,15 @@ class TIFFSimulatorGUI_V4:
         self.astig_z0_um = tk.DoubleVar(value=0.5)
         self.astig_Ax = tk.DoubleVar(value=1.0)
         self.astig_Ay = tk.DoubleVar(value=-0.5)
-        self.refractive_index_correction = tk.DoubleVar(value=1.0)  # NEU: Brechungsindex-Korrektur
+        self.refractive_index_correction = tk.DoubleVar(value=1.0)  # Legacy: Einfacher Faktor
+
+        # ===== ERWEITERTE BRECHUNGSINDEX-KORREKTUR (NEU!) =====
+        self.use_advanced_refractive_correction = tk.BooleanVar(value=False)  # Aktiviert erweiterte Korrektur
+        self.n_oil = tk.DoubleVar(value=1.518)        # Brechungsindex Immersionsöl
+        self.n_glass = tk.DoubleVar(value=1.523)      # Brechungsindex Deckglas
+        self.n_polymer = tk.DoubleVar(value=1.47)     # Brechungsindex Polymer/Medium
+        self.NA = tk.DoubleVar(value=1.50)            # Numerische Apertur
+        self.d_glass_um = tk.DoubleVar(value=170.0)   # Deckglas-Dicke [µm]
 
         # ===== ILLUMINATION GRADIENT (NEU!) =====
         self.illumination_gradient_strength = tk.DoubleVar(value=0.0)  # NEU
@@ -790,14 +798,89 @@ class TIFFSimulatorGUI_V4:
         ay_spin.pack(side=tk.LEFT, padx=5)
         ToolTip(ay_spin, "Astigmatismus y-Koeffizient\n-0.5 = Standard")
 
-        # Brechungsindex-Korrektur (NEU!)
+        # Brechungsindex-Korrektur (Legacy, einfacher Faktor)
         ri_frame = tk.Frame(astig_coef_frame)
         ri_frame.pack(fill=tk.X, pady=2)
         tk.Label(ri_frame, text="Brechungsindex-Korrektur:", width=25, anchor=tk.W).pack(side=tk.LEFT)
         ri_spin = ttk.Spinbox(ri_frame, from_=0.5, to=1.5, increment=0.01,
                    textvariable=self.refractive_index_correction, width=10, format='%.3f')
         ri_spin.pack(side=tk.LEFT, padx=5)
-        ToolTip(ri_spin, "Brechungsindex-Korrektur für z-Positionen\n1.0 = keine Korrektur (Standard)\n0.876 = Wasser/Öl-Immersion\n0.91 = Hydrogel/Öl\nKleinerer Wert = kleinere z-Abweichungen")
+        ToolTip(ri_spin, "LEGACY: Einfacher Faktor\n1.0 = keine Korrektur\n0.876 = Wasser/Öl-Immersion\n(Für physikalisch korrekte Korrektur siehe unten)")
+
+        # ====================================================================
+        # ERWEITERTE BRECHUNGSINDEX-KORREKTUR (NEU!)
+        # ====================================================================
+        advanced_ri_frame = ttk.LabelFrame(self.astig_tab, text="🔬 ERWEITERTE Brechungsindex-Korrektur (TIRF)", padding=10)
+        advanced_ri_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        tk.Label(
+            advanced_ri_frame,
+            text="⚡ Physikalisch korrekte z-Korrektur für TIRF-Mikroskopie",
+            font=("Arial", 9, "bold"),
+            fg="#16a085"
+        ).pack(anchor=tk.W, pady=(0, 5))
+
+        # Aktivierungs-Checkbox
+        enable_advanced_check = ttk.Checkbutton(
+            advanced_ri_frame,
+            text="✅ Erweiterte Korrektur aktivieren (berücksichtigt n_oil, n_glass, n_polymer, NA, d_glass)",
+            variable=self.use_advanced_refractive_correction
+        )
+        enable_advanced_check.pack(anchor=tk.W, pady=5)
+        ToolTip(enable_advanced_check, "Aktiviert die physikalisch korrekte Brechungsindex-Korrektur\nmit allen optischen Parametern (Öl, Glas, Polymer, NA)")
+
+        # n_oil
+        n_oil_frame = tk.Frame(advanced_ri_frame)
+        n_oil_frame.pack(fill=tk.X, pady=2)
+        tk.Label(n_oil_frame, text="n_oil (Immersionsöl):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        n_oil_spin = ttk.Spinbox(n_oil_frame, from_=1.40, to=1.60, increment=0.001,
+                   textvariable=self.n_oil, width=10, format='%.4f')
+        n_oil_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(n_oil_spin, "Brechungsindex Immersionsöl\n1.518 = Olympus TIRF-Öl (Standard)\n1.515 = Nikon Type F\n1.512 = Zeiss Immersol")
+
+        # n_glass
+        n_glass_frame = tk.Frame(advanced_ri_frame)
+        n_glass_frame.pack(fill=tk.X, pady=2)
+        tk.Label(n_glass_frame, text="n_glass (Deckglas):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        n_glass_spin = ttk.Spinbox(n_glass_frame, from_=1.45, to=1.60, increment=0.001,
+                   textvariable=self.n_glass, width=10, format='%.4f')
+        n_glass_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(n_glass_spin, "Brechungsindex Deckglas\n1.523 = High Precision Coverslide (Standard)\n1.515 = Standard-Glas")
+
+        # n_polymer
+        n_polymer_frame = tk.Frame(advanced_ri_frame)
+        n_polymer_frame.pack(fill=tk.X, pady=2)
+        tk.Label(n_polymer_frame, text="n_polymer (Medium/Probe):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        n_polymer_spin = ttk.Spinbox(n_polymer_frame, from_=1.30, to=1.60, increment=0.001,
+                   textvariable=self.n_polymer, width=10, format='%.4f')
+        n_polymer_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(n_polymer_spin, "Brechungsindex Polymer/Medium\n1.47 = Hydrogel (Standard)\n1.49 = PMMA\n1.33 = Wasser\n1.45 = Polyacrylamid")
+
+        # NA
+        na_frame = tk.Frame(advanced_ri_frame)
+        na_frame.pack(fill=tk.X, pady=2)
+        tk.Label(na_frame, text="NA (Numerische Apertur):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        na_spin = ttk.Spinbox(na_frame, from_=1.0, to=1.65, increment=0.01,
+                   textvariable=self.NA, width=10, format='%.3f')
+        na_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(na_spin, "Numerische Apertur des Objektivs\n1.50 = Olympus UPLAPO100XOHR (Standard)\n1.49 = Nikon CFI Apo TIRF\n1.46 = Zeiss Alpha Plan-Apochromat")
+
+        # d_glass
+        d_glass_frame = tk.Frame(advanced_ri_frame)
+        d_glass_frame.pack(fill=tk.X, pady=2)
+        tk.Label(d_glass_frame, text="d_glass (Deckglas-Dicke) [µm]:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        d_glass_spin = ttk.Spinbox(d_glass_frame, from_=100, to=200, increment=1,
+                   textvariable=self.d_glass_um, width=10, format='%.1f')
+        d_glass_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(d_glass_spin, "Deckglas-Dicke in Mikrometern\n170 µm = #1.5 High Precision (Standard)\n160 µm = #1.5 Normal\n150 µm = #1.0")
+
+        # Info-Label
+        tk.Label(
+            advanced_ri_frame,
+            text="💡 Diese Werte beeinflussen die z-Kalibrierung bei Astigmatismus-Simulationen und z-Stacks",
+            font=("Arial", 8, "italic"),
+            fg="#7f8c8d"
+        ).pack(anchor=tk.W, pady=(5, 0))
 
         # z-Stack Parameter
         zstack_frame = ttk.LabelFrame(self.astig_tab, text="📊 z-Stack Kalibrierung", padding=10)
@@ -1684,11 +1767,19 @@ class TIFFSimulatorGUI_V4:
                 "astig_z0_um": self.astig_z0_um.get(),
                 "astig_coeffs": {"A_x": self.astig_Ax.get(), "B_x": 0.0,
                                "A_y": self.astig_Ay.get(), "B_y": 0.0},
-                # NEU: Illumination Gradient und Brechungsindex-Korrektur
+                # Legacy: Einfache Brechungsindex-Korrektur
+                "refractive_index_correction": self.refractive_index_correction.get(),
+                # ERWEITERTE Brechungsindex-Korrektur (NEU!)
+                "use_advanced_refractive_correction": self.use_advanced_refractive_correction.get(),
+                "n_oil": self.n_oil.get(),
+                "n_glass": self.n_glass.get(),
+                "n_polymer": self.n_polymer.get(),
+                "NA": self.NA.get(),
+                "d_glass_um": self.d_glass_um.get(),
+                # Illumination Gradient
                 "illumination_gradient_strength": self.illumination_gradient_strength.get(),
                 "illumination_gradient_type": self.illumination_gradient_type.get(),
-                "refractive_index_correction": self.refractive_index_correction.get(),
-                # NEU: Comonomer-Beschleunigungsfaktor
+                # Comonomer-Beschleunigungsfaktor
                 "polymerization_acceleration_factor": self.polymerization_acceleration_factor.get()
             }
         )
