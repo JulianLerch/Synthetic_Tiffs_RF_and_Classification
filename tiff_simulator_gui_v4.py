@@ -187,6 +187,9 @@ class TIFFSimulatorGUI_V4:
         self.illumination_gradient_strength = tk.DoubleVar(value=0.0)  # NEU
         self.illumination_gradient_type = tk.StringVar(value="radial")  # NEU
 
+        # ===== COMONOMER-BESCHLEUNIGUNGSFAKTOR (NEU!) =====
+        self.polymerization_acceleration_factor = tk.DoubleVar(value=1.0)  # NEU
+
         # ===== Z-STACK =====
         self.z_min = tk.DoubleVar(value=-1.0)
         self.z_max = tk.DoubleVar(value=1.0)
@@ -485,6 +488,15 @@ class TIFFSimulatorGUI_V4:
         ToolTip(poly_spin, "Polymerisationszeit in Minuten\nBestimmt Gel-Vernetzung & D-Wert")
         self.d_info_label = tk.Label(t_frame, text="", font=("Arial", 9), fg="#27ae60")
         self.d_info_label.pack(side=tk.LEFT, padx=10)
+
+        # Comonomer-Beschleunigungsfaktor (NEU!)
+        comonomer_frame = tk.Frame(time_frame)
+        comonomer_frame.pack(fill=tk.X, pady=2)
+        tk.Label(comonomer_frame, text="Comonomer-Faktor:", width=22, anchor=tk.W).pack(side=tk.LEFT)
+        comonomer_spin = ttk.Spinbox(comonomer_frame, from_=0.5, to=2.0, increment=0.1,
+                   textvariable=self.polymerization_acceleration_factor, width=10, format='%.2f')
+        comonomer_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(comonomer_spin, "Beschleunigungsfaktor für Polymerisation\n1.0 = Standard\n1.5 = 50% schnellere Vernetzung (reaktives Comonomer)\n0.7 = 30% langsamere Vernetzung")
 
         # Frames
         frames_frame = tk.Frame(time_frame)
@@ -1675,7 +1687,9 @@ class TIFFSimulatorGUI_V4:
                 # NEU: Illumination Gradient und Brechungsindex-Korrektur
                 "illumination_gradient_strength": self.illumination_gradient_strength.get(),
                 "illumination_gradient_type": self.illumination_gradient_type.get(),
-                "refractive_index_correction": self.refractive_index_correction.get()
+                "refractive_index_correction": self.refractive_index_correction.get(),
+                # NEU: Comonomer-Beschleunigungsfaktor
+                "polymerization_acceleration_factor": self.polymerization_acceleration_factor.get()
             }
         )
 

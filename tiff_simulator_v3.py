@@ -103,7 +103,9 @@ TDI_PRESET = DetectorPreset(
                                                # Typisch: n_medium/n_immersion (z.B. 1.33/1.518 ≈ 0.876 für Wasser/Öl)
         # Ausleuchtungsgradient (hyperrealistisch)
         "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
-        "illumination_gradient_type": "radial"  # "radial", "linear_x", "linear_y", "corner"
+        "illumination_gradient_type": "radial",  # "radial", "linear_x", "linear_y", "corner"
+        # Comonomer-Beschleunigungsfaktor
+        "polymerization_acceleration_factor": 1.0  # 1.0 = Standard, 1.5 = 50% schneller, etc.
     }
 )
 
@@ -135,7 +137,9 @@ TETRASPECS_PRESET = DetectorPreset(
                                                # Typisch: n_medium/n_immersion (z.B. 1.33/1.518 ≈ 0.876 für Wasser/Öl)
         # Ausleuchtungsgradient (hyperrealistisch)
         "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
-        "illumination_gradient_type": "radial"  # "radial", "linear_x", "linear_y", "corner"
+        "illumination_gradient_type": "radial",  # "radial", "linear_x", "linear_y", "corner"
+        # Comonomer-Beschleunigungsfaktor
+        "polymerization_acceleration_factor": 1.0  # 1.0 = Standard, 1.5 = 50% schneller, etc.
     }
 )
 
@@ -145,7 +149,8 @@ TETRASPECS_PRESET = DetectorPreset(
 # ============================================================================
 
 def get_time_dependent_D(t_poly_min: float, D_initial: float,
-                         diffusion_type: str = "normal") -> float:
+                         diffusion_type: str = "normal",
+                         polymerization_acceleration_factor: float = 1.0) -> float:
     """
     Berechnet zeitabhängigen Diffusionskoeffizienten während der
     Polymerisationsphase basierend auf EXPERIMENTELLEN DATEN.
@@ -161,10 +166,17 @@ def get_time_dependent_D(t_poly_min: float, D_initial: float,
 
     Physikalisches Modell:
     ----------------------
-    D(t) = D₀ · exp(-t/τ) mit τ ≈ 32 min
+    D(t) = D₀ · exp(-t_eff/τ) mit τ ≈ 32 min
+    t_eff = t · polymerization_acceleration_factor
 
-    Dies gibt exakt den beobachteten Abfall von 2.7 Größenordnungen
-    über 90 Minuten.
+    COMONOMER-EFFEKT:
+    -----------------
+    polymerization_acceleration_factor steuert die Vernetzungsgeschwindigkeit:
+    - 1.0 = Standard-Polymerisation (Default)
+    - 1.5 = 50% schnellere Vernetzung (z.B. reaktives Comonomer)
+    - 0.7 = 30% langsamere Vernetzung
+
+    Effekt: Bei factor=1.5 verhält sich t=60min wie t=90min bei factor=1.0
 
     Referenzen:
     -----------
@@ -180,8 +192,11 @@ def get_time_dependent_D(t_poly_min: float, D_initial: float,
     # Aber wir nehmen τ=32 min für sanfteren Verlauf über längere Zeit:
     tau = 32.0  # [min] - angepasst an experimentelle Daten!
 
+    # Comonomer-Beschleunigung: Effektive Zeit
+    t_effective = t_poly_min * polymerization_acceleration_factor
+
     # Exponentieller Abfall
-    reduction_factor = np.exp(-t_poly_min / tau)
+    reduction_factor = np.exp(-t_effective / tau)
 
     D_base = D_initial * reduction_factor
 
@@ -197,7 +212,8 @@ def get_time_dependent_D(t_poly_min: float, D_initial: float,
     return max(D_base, 1e-4)  # Minimum: 0.0001 µm²/s
 
 
-def get_diffusion_fractions(t_poly_min: float) -> Dict[str, float]:
+def get_diffusion_fractions(t_poly_min: float,
+                           polymerization_acceleration_factor: float = 1.0) -> Dict[str, float]:
     """
     Berechnet PHYSIKALISCH KORREKTE Fraktionen verschiedener Diffusionstypen.
 
@@ -226,6 +242,13 @@ def get_diffusion_fractions(t_poly_min: float) -> Dict[str, float]:
         - Sub + Confined ~50%
         - Superdiffusion = 0%
 
+    COMONOMER-EFFEKT:
+    -----------------
+    polymerization_acceleration_factor beeinflusst die Phasenübergänge:
+    - 1.0 = Standard (Default)
+    - 1.5 = 50% schnellere Vernetzung → Phasen verschieben sich früher
+    - 0.7 = 30% langsamere Vernetzung → Phasen dauern länger
+
     Referenzen:
     -----------
     - Saxton & Jacobson (1997): Single-particle tracking
@@ -233,10 +256,13 @@ def get_diffusion_fractions(t_poly_min: float) -> Dict[str, float]:
     - Krapf et al. (2019): Anomalous diffusion in hydrogels
     """
 
+    # Comonomer-Beschleunigung: Effektive Zeit
+    t_effective = t_poly_min * polymerization_acceleration_factor
+
     # ========================================================================
     # PHASE 1: FLÜSSIG (t < 10 min)
     # ========================================================================
-    if t_poly_min < 10:
+    if t_effective < 10:
         fractions = {
             "normal": 0.88,         # Hauptsächlich Brownsch
             "superdiffusion": 0.10,  # Konvektion!
@@ -247,8 +273,8 @@ def get_diffusion_fractions(t_poly_min: float) -> Dict[str, float]:
     # ========================================================================
     # PHASE 2: FRÜHE VERNETZUNG (10-60 min)
     # ========================================================================
-    elif t_poly_min < 60:
-        progress = (t_poly_min - 10.0) / 50.0  # 0 bei 10 min, 1 bei 60 min
+    elif t_effective < 60:
+        progress = (t_effective - 10.0) / 50.0  # 0 bei 10 min, 1 bei 60 min
 
         fractions = {
             # Normal sinkt langsam
@@ -267,8 +293,8 @@ def get_diffusion_fractions(t_poly_min: float) -> Dict[str, float]:
     # ========================================================================
     # PHASE 3: VERNETZUNG (60-90 min)
     # ========================================================================
-    elif t_poly_min < 90:
-        progress = (t_poly_min - 60.0) / 30.0  # 0 bei 60 min, 1 bei 90 min
+    elif t_effective < 90:
+        progress = (t_effective - 60.0) / 30.0  # 0 bei 60 min, 1 bei 90 min
 
         fractions = {
             # Normal sinkt deutlich
@@ -287,8 +313,8 @@ def get_diffusion_fractions(t_poly_min: float) -> Dict[str, float]:
     # ========================================================================
     # PHASE 4: STARK VERNETZT (90-120 min)
     # ========================================================================
-    elif t_poly_min < 120:
-        progress = (t_poly_min - 90.0) / 30.0  # 0 bei 90 min, 1 bei 120 min
+    elif t_effective < 120:
+        progress = (t_effective - 90.0) / 30.0  # 0 bei 90 min, 1 bei 120 min
 
         fractions = {
             # Normal sinkt weiter auf ~50%
@@ -634,20 +660,22 @@ class TrajectoryGenerator:
     def __init__(self, D_initial: float, t_poly_min: float,
                  frame_rate_hz: float, pixel_size_um: float,
                  enable_switching: bool = True,
-                 base_switch_prob: float = 0.01):
+                 base_switch_prob: float = 0.01,
+                 polymerization_acceleration_factor: float = 1.0):
         self.D_initial = D_initial
         self.t_poly_min = t_poly_min
         self.dt = 1.0 / frame_rate_hz
         self.pixel_size_um = pixel_size_um
         self.enable_switching = enable_switching
         self._base_switch_prob = float(base_switch_prob)
+        self.polymerization_acceleration_factor = polymerization_acceleration_factor
 
-        # Hole Diffusionsfraktionen
-        self.fractions = get_diffusion_fractions(t_poly_min)
+        # Hole Diffusionsfraktionen (mit Comonomer-Faktor)
+        self.fractions = get_diffusion_fractions(t_poly_min, polymerization_acceleration_factor)
 
-        # Berechne D-Werte für jeden Typ
+        # Berechne D-Werte für jeden Typ (mit Comonomer-Faktor)
         self.D_values = {
-            dtype: get_time_dependent_D(t_poly_min, D_initial, dtype)
+            dtype: get_time_dependent_D(t_poly_min, D_initial, dtype, polymerization_acceleration_factor)
             for dtype in self.fractions.keys()
         }
 
@@ -1011,18 +1039,25 @@ class TIFFSimulatorOptimized:
     """
 
     def __init__(self, detector: DetectorPreset, mode: str = "polyzeit",
-                 t_poly_min: float = 60.0, astigmatism: bool = False):
+                 t_poly_min: float = 60.0, astigmatism: bool = False,
+                 polymerization_acceleration_factor: float = 1.0):
 
         self.detector = detector
         self.mode = mode
         self.t_poly_min = t_poly_min
         self.astigmatism = astigmatism
 
+        # Comonomer-Beschleunigungsfaktor (kann auch aus Metadata kommen)
+        meta = detector.metadata or {}
+        self.polymerization_acceleration_factor = float(meta.get(
+            "polymerization_acceleration_factor",
+            polymerization_acceleration_factor
+        ))
+
         # Initialisiere Generatoren (OPTIMIERT)
         self.psf_gen = PSFGeneratorOptimized(detector, astigmatism)
 
         # Ausleuchtungsgradient-Parameter aus Metadata
-        meta = detector.metadata or {}
         gradient_strength = float(meta.get("illumination_gradient_strength", 0.0))
         gradient_type = str(meta.get("illumination_gradient_type", "radial"))
 
@@ -1086,7 +1121,8 @@ class TIFFSimulatorOptimized:
             t_poly_min=self.t_poly_min,
             frame_rate_hz=frame_rate_hz,
             pixel_size_um=self.detector.pixel_size_um,
-            enable_switching=bool(traj_options.get("enable_switching", True))
+            enable_switching=bool(traj_options.get("enable_switching", True)),
+            polymerization_acceleration_factor=self.polymerization_acceleration_factor
         )
 
         # Generiere Trajektorien
