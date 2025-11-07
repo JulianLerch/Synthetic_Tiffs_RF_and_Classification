@@ -459,7 +459,9 @@
                 # NEU: Illumination Gradient und Brechungsindex-Korrektur
                 "illumination_gradient_strength": self.illumination_gradient_strength.get(),
                 "illumination_gradient_type": self.illumination_gradient_type.get(),
-                "refractive_index_correction": self.refractive_index_correction.get()
+                "refractive_index_correction": self.refractive_index_correction.get(),
+                # NEU: Comonomer-Beschleunigungsfaktor
+                "polymerization_acceleration_factor": self.polymerization_acceleration_factor.get()
             }
         )
 
