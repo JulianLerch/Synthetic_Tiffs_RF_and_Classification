@@ -2592,7 +2592,48 @@ Dieses RF-Modell wurde mit **{rf_info.get('samples', 0)} Samples** trainiert und
 
 ## 🔢 Features (Total: {len(feature_names)})
 
-Das Modell verwendet folgende Features pro Track-Fenster:
+Das Modell verwendet **{len(feature_names)} Features** pro Track-Fenster, kategorisiert nach Typ:
+
+### 📋 Feature-Übersicht
+
+| # | Feature Name | Kategorie | Beschreibung |
+|---|--------------|-----------|--------------|
+| 1-6 | mean/std/median/mad/max/min_step_xy | Step Stats | Laterale Schrittweiten-Statistiken |
+| 7-8 | mean/std_step_z | Step Stats | Axiale Schrittweiten-Statistiken |
+| 9-12 | msd_lag1/2/4/8 | MSD | Mean Squared Displacement bei verschiedenen Lags |
+| 13 | msd_loglog_slope | **Anomal** | Anomaler Exponent α (Normal=1.0, Sub<1.0, Super>1.0) |
+| 14 | straightness | Geometry | End-to-End-Distanz / Pfadlänge |
+| 15 | confinement_radius | Confinement | Maximale Distanz vom Schwerpunkt |
+| 16-17 | radius/asymmetry_of_gyration | Geometry | Gyrationsradius und Asymmetrie |
+| 18-19 | turning_angle_mean/std | Direction | Wendewinkiel-Statistiken |
+| 20-21 | step_p90/p10 | Step Stats | 90. und 10. Perzentil der Schritte |
+| 22 | bounding_box_area | Geometry | XY Bounding Box Fläche |
+| 23 | axial_range | Geometry | Z-Range (max - min) |
+| 24 | directional_persistence | Direction | Richtungspersistenz |
+| 25 | velocity_autocorr | Dynamics | Geschwindigkeits-Autokorrelation |
+| 26-27 | step_skewness/kurtosis | Distribution | Schiefe und Kurtosis der Schrittverteilung |
+| **28-29** | **msd_ratio_lag4/8** | **Anomal 🔥** | **MSD(lag)/(lag\*MSD(1)) - Schlüssel für Sub/Super!** |
+| **30-32** | **d_eff_lag1/4/8** | **Anomal 🔥** | **Effektive Diffusionskoeffizienten** |
+| **33** | **d_eff_variation** | **Anomal 🔥** | **Variation in D_eff (hoch bei anomaler Diffusion)** |
+| **34** | **displacement_kurtosis** | **Anomal 🔥** | **Non-Gaussianität (Normal≈3.0)** |
+
+### 🎯 Features 28-34: Anomale Diffusion Detektoren
+
+Diese **7 neuen Features** sind speziell für die Erkennung von anomaler Diffusion optimiert:
+
+**MSD-Ratios (28-29)**:
+- Normale Diffusion: `MSD(lag) = 4*D*lag` → Ratio ≈ 1.0
+- Subdiffusion: Ratio < 1.0 (MSD wächst sublinear)
+- Superdiffusion: Ratio > 1.0 (MSD wächst superlinear)
+
+**Effektive D-Koeffizienten (30-33)**:
+- `D_eff(lag) = MSD(lag) / (4*lag)`
+- Normal: D_eff ist **konstant** → niedrige Variation
+- Anomal: D_eff **variiert** mit lag → hohe Variation
+
+**Displacement Kurtosis (34)**:
+- Misst Abweichung von Gauß-Verteilung
+- Normal ≈ 3.0, Anomal weicht ab
 
 {self._format_feature_list_md(feature_names)}
 
@@ -2736,7 +2777,41 @@ def calculate_features(positions, frame_rate_hz=20.0):
     step_skewness = float(stats.skew(steps_xy))
     step_kurtosis = float(stats.kurtosis(steps_xy))
 
-    # Feature-Vektor zusammenbauen
+    # ============================================
+    # NEUE FEATURES (28-34) für Anomale Diffusion
+    # ============================================
+
+    # 28-29: MSD Ratios (Schlüssel-Features!)
+    # Für normale Diffusion: MSD(lag) = 4*D*lag → Ratio = 1.0
+    # Subdiffusion: Ratio < 1.0 (sublinear)
+    # Superdiffusion: Ratio > 1.0 (superlinear)
+    msd_ratio_lag4 = (msd_lag4 / (4.0 * msd_lag1 + 1e-12)) if msd_lag1 > 0 else 1.0
+    msd_ratio_lag8 = (msd_lag8 / (8.0 * msd_lag1 + 1e-12)) if msd_lag1 > 0 else 1.0
+
+    # 30-32: Effektive Diffusionskoeffizienten
+    # D_eff = MSD(lag) / (4 * lag) für 2D-Diffusion
+    # Anomale Diffusion zeigt lag-abhängiges D!
+    d_eff_lag1 = msd_lag1 / 4.0
+    d_eff_lag4 = msd_lag4 / 16.0
+    d_eff_lag8 = msd_lag8 / 32.0
+
+    # 33: Variation im effektiven D
+    # Normale Diffusion: D_eff konstant → Variation niedrig
+    # Anomale Diffusion: D_eff variiert mit lag → Variation hoch
+    d_eff_variation = float(np.std([d_eff_lag1, d_eff_lag4, d_eff_lag8]))
+
+    # 34: Displacement Kurtosis (Non-Gaussianity)
+    # Normale Diffusion: ~3.0 (Gauß-Verteilung)
+    # Anomale Diffusion: weicht ab
+    displacements_xy = steps_xy  # Already computed as step distances
+    if len(displacements_xy) > 3:
+        disp_mean = np.mean(displacements_xy)
+        disp_std = np.std(displacements_xy) + 1e-12
+        displacement_kurtosis = float(np.mean(((displacements_xy - disp_mean) / disp_std) ** 4))
+    else:
+        displacement_kurtosis = 3.0
+
+    # Feature-Vektor zusammenbauen (ALLE 34 Features!)
     features = [
         mean_step_xy, std_step_xy, median_step_xy, mad_step_xy,
         max_step_xy, min_step_xy, mean_step_z, std_step_z,
@@ -2746,10 +2821,53 @@ def calculate_features(positions, frame_rate_hz=20.0):
         turning_angle_mean, turning_angle_std,
         step_p90, step_p10, bounding_box_area, axial_range,
         directional_persistence, velocity_autocorr,
-        step_skewness, step_kurtosis
+        step_skewness, step_kurtosis,
+        # NEUE Features für anomale Diffusion
+        msd_ratio_lag4, msd_ratio_lag8,
+        d_eff_lag1, d_eff_lag4, d_eff_lag8,
+        d_eff_variation, displacement_kurtosis
     ]
 
     return np.array(features, dtype=np.float32)
+```
+
+### Erklärung der neuen Features (28-34):
+
+#### **MSD-Ratios** (Features 28-29) - SEHR WICHTIG!
+Für normale 2D-Diffusion gilt: `MSD(lag) = 4*D*lag`
+
+- **Normal Diffusion**: `msd_ratio_lag4 ≈ 1.0` (linear)
+- **Subdiffusion**: `msd_ratio_lag4 < 1.0` (MSD wächst langsamer als linear)
+- **Superdiffusion**: `msd_ratio_lag4 > 1.0` (MSD wächst schneller als linear)
+
+```python
+# Beispiel-Werte:
+# Normal:        msd_ratio_lag4 ≈ 0.98 - 1.02
+# Subdiffusion:  msd_ratio_lag4 ≈ 0.5 - 0.8
+# Superdiffusion: msd_ratio_lag4 ≈ 1.2 - 1.8
+```
+
+#### **Effektive Diffusionskoeffizienten** (Features 30-33)
+`D_eff(lag) = MSD(lag) / (4 * lag)`
+
+- **Normal**: D_eff ist konstant über alle lags
+- **Anomal**: D_eff ändert sich mit lag!
+
+Die **Variation** (Feature 33) ist der Schlüssel:
+```python
+# Normal:        d_eff_variation ≈ 0.001 - 0.01 (sehr klein)
+# Subdiffusion:  d_eff_variation ≈ 0.05 - 0.15 (mittel)
+# Superdiffusion: d_eff_variation ≈ 0.1 - 0.3 (groß)
+```
+
+#### **Displacement Kurtosis** (Feature 34)
+Misst die "Schwere der Verteilungsenden":
+- **Normal (Gauß)**: ≈ 3.0
+- **Anomal**: weicht von 3.0 ab
+
+```python
+# Confined: oft > 3.0 (heavy tails)
+# Superdiffusion: oft < 3.0 (light tails)
 ```
 
 ### 3. Vorhersage für neue Trajektorie
