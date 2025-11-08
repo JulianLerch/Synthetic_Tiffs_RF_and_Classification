@@ -2427,10 +2427,6 @@ class TIFFSimulatorGUI_V4:
 
             # Generate trajectories for each poly time
             for poly_idx, t_poly in enumerate(poly_times):
-                self._update_status(f"🎬 Polymerisationszeit {t_poly} min ({poly_idx+1}/{len(poly_times)})...")
-                progress = 10 + int((poly_idx / len(poly_times)) * 70)
-                self._update_progress(progress)
-
                 # Create trajectory generator
                 traj_gen = TrajectoryGenerator(
                     D_initial=d_initial,
@@ -2443,10 +2439,15 @@ class TIFFSimulatorGUI_V4:
 
                 # Generate tracks for each diffusion type
                 for diffusion_type in ["normal", "subdiffusion", "confined", "superdiffusion"]:
-                    self._update_status(f"   → {diffusion_type} @ {t_poly}min...")
-
                     # Generate multiple tracks
                     for track_idx in range(tracks_per_type):
+                        # Detailed status update (every 10 tracks)
+                        if track_idx % 10 == 0:
+                            status_msg = f"🎬 Trajektorien: {diffusion_type} @ t={t_poly}min | Track {track_idx+1}/{tracks_per_type} | Gesamt: {processed_tracks}/{total_tracks}"
+                            self._update_status(status_msg)
+                            tracks_progress = 10 + int((processed_tracks / total_tracks) * 65)
+                            self._update_progress(tracks_progress)
+
                         # Random start position
                         start_pos = (
                             np.random.uniform(10, 100),  # x [µm]
@@ -2478,19 +2479,24 @@ class TIFFSimulatorGUI_V4:
 
                         # Feed to RF trainer
                         rf_trainer.update_with_metadata(metadata)
-
                         processed_tracks += 1
 
-                        # Update progress occasionally
-                        if processed_tracks % 100 == 0:
-                            tracks_progress = 10 + int((processed_tracks / total_tracks) * 70)
-                            self._update_progress(tracks_progress)
-
             # Finalize and train RF
-            self._update_status("🌲 Trainiere Random Forest...")
-            self._update_progress(85)
+            self._update_status(f"🧮 Berechne Features aus {processed_tracks} Trajektorien...")
+            self._update_progress(75)
 
+            # Feature calculation happens during update_with_metadata
+            self._update_status("✅ Features berechnet! Starte Random Forest Training...")
+            self._update_progress(78)
+
+            self._update_status(f"🌲 Trainiere Random Forest ({rf_config.n_estimators} Bäume)...")
+            self._update_progress(80)
+
+            # This is where the heavy computation happens
             rf_info = rf_trainer.finalize()
+
+            self._update_status("💾 Speichere Modell und Metriken...")
+            self._update_progress(92)
 
             self._update_status("📝 Exportiere Dokumentation...")
             self._update_progress(95)
