@@ -23,6 +23,8 @@ import os
 import threading
 from pathlib import Path
 from datetime import datetime
+from typing import List, Dict
+import numpy as np
 
 try:
     from tiff_simulator_v3 import (
@@ -181,7 +183,15 @@ class TIFFSimulatorGUI_V4:
         self.astig_z0_um = tk.DoubleVar(value=0.5)
         self.astig_Ax = tk.DoubleVar(value=1.0)
         self.astig_Ay = tk.DoubleVar(value=-0.5)
-        self.refractive_index_correction = tk.DoubleVar(value=1.0)  # NEU: Brechungsindex-Korrektur
+        self.refractive_index_correction = tk.DoubleVar(value=1.0)  # Legacy: Einfacher Faktor
+
+        # ===== ERWEITERTE BRECHUNGSINDEX-KORREKTUR (NEU!) =====
+        self.use_advanced_refractive_correction = tk.BooleanVar(value=False)  # Aktiviert erweiterte Korrektur
+        self.n_oil = tk.DoubleVar(value=1.518)        # Brechungsindex Immersionsöl
+        self.n_glass = tk.DoubleVar(value=1.523)      # Brechungsindex Deckglas
+        self.n_polymer = tk.DoubleVar(value=1.47)     # Brechungsindex Polymer/Medium
+        self.NA = tk.DoubleVar(value=1.50)            # Numerische Apertur
+        self.d_glass_um = tk.DoubleVar(value=170.0)   # Deckglas-Dicke [µm]
 
         # ===== ILLUMINATION GRADIENT (NEU!) =====
         self.illumination_gradient_strength = tk.DoubleVar(value=0.0)  # NEU
@@ -213,7 +223,7 @@ class TIFFSimulatorGUI_V4:
         self.analysis_preview_text = tk.StringVar(value="Keine XML geladen...")
         self.analysis_status = tk.StringVar(value="Bereit")
         self.batch_use_spot_range = tk.BooleanVar(value=True)
-        self.batch_subfolder_per_repeat = tk.BooleanVar(value=True)
+        self.batch_folder_structure = tk.StringVar(value="by_repeat")  # "by_repeat", "by_polytime", or "flat"
         # Legacy (falls benötigt)
         self.batch_preset = tk.StringVar(value="quick")
         self.batch_detector = tk.StringVar(value="TDI-G0")
@@ -230,6 +240,23 @@ class TIFFSimulatorGUI_V4:
         self.batch_rf_max_samples = tk.DoubleVar(value=0.85)
         self.batch_rf_max_windows_per_class = tk.IntVar(value=100_000)
         self.batch_rf_max_windows_per_track = tk.IntVar(value=600)
+
+        # ===== DEDIZIERTES RF-TRAINING (NEU!) =====
+        self.rf_dedicated_output_dir = tk.StringVar(value=str(Path.home() / "Desktop" / "rf_training"))
+        # Trajectory Generation
+        self.rf_dedicated_num_frames = tk.IntVar(value=300)  # Lange Tracks!
+        self.rf_dedicated_tracks_per_type = tk.IntVar(value=1000)  # Viele Tracks pro Typ
+        self.rf_dedicated_poly_times = tk.StringVar(value="0, 30, 60, 90, 120, 180")  # Alle Polygrade
+        self.rf_dedicated_frame_rate = tk.DoubleVar(value=20.0)
+        self.rf_dedicated_d_initial = tk.DoubleVar(value=0.24)
+        # RF Hyperparameters (GROSSE Werte für bestes Modell!)
+        self.rf_dedicated_n_estimators = tk.IntVar(value=4096)  # 4096 Bäume!
+        self.rf_dedicated_max_depth = tk.IntVar(value=30)
+        self.rf_dedicated_min_leaf = tk.IntVar(value=3)
+        self.rf_dedicated_min_split = tk.IntVar(value=8)
+        self.rf_dedicated_max_samples = tk.DoubleVar(value=0.8)
+        self.rf_dedicated_window_sizes = tk.StringVar(value="32, 48, 64, 96")
+        self.rf_dedicated_step_fraction = tk.DoubleVar(value=0.5)
 
         # ===== EXPORT =====
         self.export_metadata = tk.BooleanVar(value=True)
@@ -344,7 +371,12 @@ class TIFFSimulatorGUI_V4:
         self.notebook.add(self.export_tab, text="💾 Export")
         self._create_export_tab()
 
-        # Tab 7: Track Analysis (NEU V4.1!)
+        # Tab 7: RF Training (DEDICATED MODE - NEU!)
+        self.rf_training_tab = ttk.Frame(self.notebook)
+        self.notebook.add(self.rf_training_tab, text="🌲 RF Training")
+        self._create_rf_training_tab()
+
+        # Tab 8: Track Analysis
         self.analysis_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.analysis_tab, text="🔬 Track Analysis")
         self._create_analysis_tab()
@@ -790,14 +822,89 @@ class TIFFSimulatorGUI_V4:
         ay_spin.pack(side=tk.LEFT, padx=5)
         ToolTip(ay_spin, "Astigmatismus y-Koeffizient\n-0.5 = Standard")
 
-        # Brechungsindex-Korrektur (NEU!)
+        # Brechungsindex-Korrektur (Legacy, einfacher Faktor)
         ri_frame = tk.Frame(astig_coef_frame)
         ri_frame.pack(fill=tk.X, pady=2)
         tk.Label(ri_frame, text="Brechungsindex-Korrektur:", width=25, anchor=tk.W).pack(side=tk.LEFT)
         ri_spin = ttk.Spinbox(ri_frame, from_=0.5, to=1.5, increment=0.01,
                    textvariable=self.refractive_index_correction, width=10, format='%.3f')
         ri_spin.pack(side=tk.LEFT, padx=5)
-        ToolTip(ri_spin, "Brechungsindex-Korrektur für z-Positionen\n1.0 = keine Korrektur (Standard)\n0.876 = Wasser/Öl-Immersion\n0.91 = Hydrogel/Öl\nKleinerer Wert = kleinere z-Abweichungen")
+        ToolTip(ri_spin, "LEGACY: Einfacher Faktor\n1.0 = keine Korrektur\n0.876 = Wasser/Öl-Immersion\n(Für physikalisch korrekte Korrektur siehe unten)")
+
+        # ====================================================================
+        # ERWEITERTE BRECHUNGSINDEX-KORREKTUR (NEU!)
+        # ====================================================================
+        advanced_ri_frame = ttk.LabelFrame(self.astig_tab, text="🔬 ERWEITERTE Brechungsindex-Korrektur (TIRF)", padding=10)
+        advanced_ri_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        tk.Label(
+            advanced_ri_frame,
+            text="⚡ Physikalisch korrekte z-Korrektur für TIRF-Mikroskopie",
+            font=("Arial", 9, "bold"),
+            fg="#16a085"
+        ).pack(anchor=tk.W, pady=(0, 5))
+
+        # Aktivierungs-Checkbox
+        enable_advanced_check = ttk.Checkbutton(
+            advanced_ri_frame,
+            text="✅ Erweiterte Korrektur aktivieren (berücksichtigt n_oil, n_glass, n_polymer, NA, d_glass)",
+            variable=self.use_advanced_refractive_correction
+        )
+        enable_advanced_check.pack(anchor=tk.W, pady=5)
+        ToolTip(enable_advanced_check, "Aktiviert die physikalisch korrekte Brechungsindex-Korrektur\nmit allen optischen Parametern (Öl, Glas, Polymer, NA)")
+
+        # n_oil
+        n_oil_frame = tk.Frame(advanced_ri_frame)
+        n_oil_frame.pack(fill=tk.X, pady=2)
+        tk.Label(n_oil_frame, text="n_oil (Immersionsöl):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        n_oil_spin = ttk.Spinbox(n_oil_frame, from_=1.40, to=1.60, increment=0.001,
+                   textvariable=self.n_oil, width=10, format='%.4f')
+        n_oil_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(n_oil_spin, "Brechungsindex Immersionsöl\n1.518 = Olympus TIRF-Öl (Standard)\n1.515 = Nikon Type F\n1.512 = Zeiss Immersol")
+
+        # n_glass
+        n_glass_frame = tk.Frame(advanced_ri_frame)
+        n_glass_frame.pack(fill=tk.X, pady=2)
+        tk.Label(n_glass_frame, text="n_glass (Deckglas):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        n_glass_spin = ttk.Spinbox(n_glass_frame, from_=1.45, to=1.60, increment=0.001,
+                   textvariable=self.n_glass, width=10, format='%.4f')
+        n_glass_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(n_glass_spin, "Brechungsindex Deckglas\n1.523 = High Precision Coverslide (Standard)\n1.515 = Standard-Glas")
+
+        # n_polymer
+        n_polymer_frame = tk.Frame(advanced_ri_frame)
+        n_polymer_frame.pack(fill=tk.X, pady=2)
+        tk.Label(n_polymer_frame, text="n_polymer (Medium/Probe):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        n_polymer_spin = ttk.Spinbox(n_polymer_frame, from_=1.30, to=1.60, increment=0.001,
+                   textvariable=self.n_polymer, width=10, format='%.4f')
+        n_polymer_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(n_polymer_spin, "Brechungsindex Polymer/Medium\n1.47 = Hydrogel (Standard)\n1.49 = PMMA\n1.33 = Wasser\n1.45 = Polyacrylamid")
+
+        # NA
+        na_frame = tk.Frame(advanced_ri_frame)
+        na_frame.pack(fill=tk.X, pady=2)
+        tk.Label(na_frame, text="NA (Numerische Apertur):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        na_spin = ttk.Spinbox(na_frame, from_=1.0, to=1.65, increment=0.01,
+                   textvariable=self.NA, width=10, format='%.3f')
+        na_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(na_spin, "Numerische Apertur des Objektivs\n1.50 = Olympus UPLAPO100XOHR (Standard)\n1.49 = Nikon CFI Apo TIRF\n1.46 = Zeiss Alpha Plan-Apochromat")
+
+        # d_glass
+        d_glass_frame = tk.Frame(advanced_ri_frame)
+        d_glass_frame.pack(fill=tk.X, pady=2)
+        tk.Label(d_glass_frame, text="d_glass (Deckglas-Dicke) [µm]:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        d_glass_spin = ttk.Spinbox(d_glass_frame, from_=100, to=200, increment=1,
+                   textvariable=self.d_glass_um, width=10, format='%.1f')
+        d_glass_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(d_glass_spin, "Deckglas-Dicke in Mikrometern\n170 µm = #1.5 High Precision (Standard)\n160 µm = #1.5 Normal\n150 µm = #1.0")
+
+        # Info-Label
+        tk.Label(
+            advanced_ri_frame,
+            text="💡 Diese Werte beeinflussen die z-Kalibrierung bei Astigmatismus-Simulationen und z-Stacks",
+            font=("Arial", 8, "italic"),
+            fg="#7f8c8d"
+        ).pack(anchor=tk.W, pady=(5, 0))
 
         # z-Stack Parameter
         zstack_frame = ttk.LabelFrame(self.astig_tab, text="📊 z-Stack Kalibrierung", padding=10)
@@ -949,12 +1056,30 @@ class TIFFSimulatorGUI_V4:
         ttk.Spinbox(rep_row, from_=1, to=20, increment=1,
                    textvariable=self.batch_repeats, width=10).pack(side=tk.LEFT, padx=5)
 
-        folder_check = ttk.Checkbutton(
+        # Ordnerstruktur-Optionen
+        folder_label = tk.Label(repeat_frame, text="📁 Ordnerstruktur:", anchor=tk.W, font=("Segoe UI", 9, "bold"))
+        folder_label.pack(anchor=tk.W, pady=(10, 5))
+
+        ttk.Radiobutton(
             repeat_frame,
-            text="📁 Jede Wiederholung in eigenem Unterordner (repeat_1, repeat_2, ...)",
-            variable=self.batch_subfolder_per_repeat
-        )
-        folder_check.pack(anchor=tk.W, pady=5)
+            text="Nach Wiederholungen (repeat_1/, repeat_2/, ...)",
+            variable=self.batch_folder_structure,
+            value="by_repeat"
+        ).pack(anchor=tk.W, padx=20)
+
+        ttk.Radiobutton(
+            repeat_frame,
+            text="Nach Polymerisationszeit (t030min/, t060min/, ...)",
+            variable=self.batch_folder_structure,
+            value="by_polytime"
+        ).pack(anchor=tk.W, padx=20)
+
+        ttk.Radiobutton(
+            repeat_frame,
+            text="Alle Dateien in einem Ordner (keine Unterordner)",
+            variable=self.batch_folder_structure,
+            value="flat"
+        ).pack(anchor=tk.W, padx=20, pady=(0, 5))
 
         # ====================================================================
         # ASTIGMATISMUS
@@ -1540,7 +1665,7 @@ class TIFFSimulatorGUI_V4:
         spot_min = self.num_spots_min.get()
         spot_max = self.num_spots_max.get()
         astigmatism = self.batch_astig.get()
-        subfolder_per_repeat = self.batch_subfolder_per_repeat.get()
+        folder_structure = self.batch_folder_structure.get()  # "by_repeat", "by_polytime", or "flat"
 
         # Output-Verzeichnis
         base_dir = Path(self.output_dir.get())
@@ -1561,17 +1686,18 @@ class TIFFSimulatorGUI_V4:
 
         # Batch-Loop
         for repeat in range(1, repeats + 1):
-            # Unterordner?
-            if subfolder_per_repeat:
-                output_dir = base_dir / f"repeat_{repeat}"
-                output_dir.mkdir(parents=True, exist_ok=True)
-            else:
-                output_dir = base_dir
-                output_dir.mkdir(parents=True, exist_ok=True)
-
             for t_poly in poly_times:
                 current_task += 1
                 progress = int((current_task / total_tasks) * 90) + 5
+
+                # Ordnerstruktur basierend auf gewähltem Modus
+                if folder_structure == "by_repeat":
+                    output_dir = base_dir / f"repeat_{repeat}"
+                elif folder_structure == "by_polytime":
+                    output_dir = base_dir / f"t{int(t_poly):03d}min"
+                else:  # flat
+                    output_dir = base_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
 
                 # Spot-Anzahl
                 if use_spot_range:
@@ -1684,11 +1810,19 @@ class TIFFSimulatorGUI_V4:
                 "astig_z0_um": self.astig_z0_um.get(),
                 "astig_coeffs": {"A_x": self.astig_Ax.get(), "B_x": 0.0,
                                "A_y": self.astig_Ay.get(), "B_y": 0.0},
-                # NEU: Illumination Gradient und Brechungsindex-Korrektur
+                # Legacy: Einfache Brechungsindex-Korrektur
+                "refractive_index_correction": self.refractive_index_correction.get(),
+                # ERWEITERTE Brechungsindex-Korrektur (NEU!)
+                "use_advanced_refractive_correction": self.use_advanced_refractive_correction.get(),
+                "n_oil": self.n_oil.get(),
+                "n_glass": self.n_glass.get(),
+                "n_polymer": self.n_polymer.get(),
+                "NA": self.NA.get(),
+                "d_glass_um": self.d_glass_um.get(),
+                # Illumination Gradient
                 "illumination_gradient_strength": self.illumination_gradient_strength.get(),
                 "illumination_gradient_type": self.illumination_gradient_type.get(),
-                "refractive_index_correction": self.refractive_index_correction.get(),
-                # NEU: Comonomer-Beschleunigungsfaktor
+                # Comonomer-Beschleunigungsfaktor
                 "polymerization_acceleration_factor": self.polymerization_acceleration_factor.get()
             }
         )
@@ -1696,7 +1830,201 @@ class TIFFSimulatorGUI_V4:
         return custom
 
     # ========================================================================
-    # TRACK ANALYSIS TAB (NEU V4.1!)
+    # RF TRAINING TAB (DEDICATED MODE - NEU!)
+    # ========================================================================
+
+    def _create_rf_training_tab(self):
+        """Erstellt den dedizierten RF-Training Tab."""
+
+        tk.Label(
+            self.rf_training_tab,
+            text="🌲 DEDIZIERTES RF-TRAINING",
+            font=("Arial", 16, "bold"),
+            fg="#16a085"
+        ).pack(pady=10)
+
+        tk.Label(
+            self.rf_training_tab,
+            text="⚡ Trainiere einen extrem leistungsstarken Random Forest OHNE TIFF-Generierung",
+            font=("Arial", 10, "bold"),
+            fg="#27ae60"
+        ).pack()
+
+        tk.Label(
+            self.rf_training_tab,
+            text="🎯 Generiert nur Trajektorien + Metadata → Schneller & effizienter!",
+            font=("Arial", 9),
+            fg="#7f8c8d"
+        ).pack(pady=2)
+
+        # Scrollable Frame
+        scroll_frame = ScrollableFrame(self.rf_training_tab)
+        scroll_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        container = scroll_frame.scrollable_frame
+
+        # ====================================================================
+        # OUTPUT DIRECTORY
+        # ====================================================================
+        output_frame = ttk.LabelFrame(container, text="📁 Output-Verzeichnis", padding=10)
+        output_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        dir_frame = tk.Frame(output_frame)
+        dir_frame.pack(fill=tk.X, pady=5)
+
+        tk.Entry(dir_frame, textvariable=self.rf_dedicated_output_dir, width=50).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        ttk.Button(dir_frame, text="Browse...", command=self._browse_rf_output_dir).pack(side=tk.LEFT, padx=5)
+
+        # ====================================================================
+        # TRAJECTORY GENERATION
+        # ====================================================================
+        traj_frame = ttk.LabelFrame(container, text="🎬 Trajektorien-Generierung", padding=10)
+        traj_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Num Frames
+        frames_frame = tk.Frame(traj_frame)
+        frames_frame.pack(fill=tk.X, pady=2)
+        tk.Label(frames_frame, text="Track-Länge (Frames):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(frames_frame, from_=100, to=1000, increment=50,
+                   textvariable=self.rf_dedicated_num_frames, width=15).pack(side=tk.LEFT, padx=5)
+        ToolTip(frames_frame, "Lange Tracks = mehr Features pro Track\n300-500 empfohlen")
+
+        # Tracks per Type
+        tracks_frame = tk.Frame(traj_frame)
+        tracks_frame.pack(fill=tk.X, pady=2)
+        tk.Label(tracks_frame, text="Tracks pro Diffusionsart:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(tracks_frame, from_=100, to=10000, increment=100,
+                   textvariable=self.rf_dedicated_tracks_per_type, width=15).pack(side=tk.LEFT, padx=5)
+        ToolTip(tracks_frame, "1000-5000 empfohlen für starkes Modell\nJe mehr desto besser!")
+
+        # Poly Times
+        poly_frame = tk.Frame(traj_frame)
+        poly_frame.pack(fill=tk.X, pady=2)
+        tk.Label(poly_frame, text="Polymerisationszeiten [min]:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        tk.Entry(poly_frame, textvariable=self.rf_dedicated_poly_times, width=30).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        ToolTip(poly_frame, "Komma-separiert: z.B. '0, 30, 60, 90, 120, 180'\nMehr Werte = robusteres Modell über alle Polygrade!")
+
+        # Frame Rate
+        framerate_frame = tk.Frame(traj_frame)
+        framerate_frame.pack(fill=tk.X, pady=2)
+        tk.Label(framerate_frame, text="Frame Rate [Hz]:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(framerate_frame, from_=1, to=100, increment=1,
+                   textvariable=self.rf_dedicated_frame_rate, width=15, format='%.1f').pack(side=tk.LEFT, padx=5)
+
+        # D_initial
+        d_frame = tk.Frame(traj_frame)
+        d_frame.pack(fill=tk.X, pady=2)
+        tk.Label(d_frame, text="D_initial [µm²/s]:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(d_frame, from_=0.01, to=2.0, increment=0.01,
+                   textvariable=self.rf_dedicated_d_initial, width=15, format='%.3f').pack(side=tk.LEFT, padx=5)
+
+        # ====================================================================
+        # RF HYPERPARAMETERS
+        # ====================================================================
+        rf_hyper_frame = ttk.LabelFrame(container, text="🌲 Random Forest Hyperparameter", padding=10)
+        rf_hyper_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        tk.Label(
+            rf_hyper_frame,
+            text="💪 POWER-DEFAULTS: 4096 Bäume, Multi-Window, Poly-Feature integriert!",
+            font=("Arial", 9, "bold"),
+            fg="#16a085"
+        ).pack(pady=5)
+
+        # N Estimators
+        estimators_frame = tk.Frame(rf_hyper_frame)
+        estimators_frame.pack(fill=tk.X, pady=2)
+        tk.Label(estimators_frame, text="Anzahl Bäume (n_estimators):", width=30, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(estimators_frame, from_=512, to=8192, increment=512,
+                   textvariable=self.rf_dedicated_n_estimators, width=15).pack(side=tk.LEFT, padx=5)
+        ToolTip(estimators_frame, "4096-8192 = Extrem stark!\n2048-4096 = Sehr gut (Standard)\n1024 = Gut")
+
+        # Max Depth
+        depth_frame = tk.Frame(rf_hyper_frame)
+        depth_frame.pack(fill=tk.X, pady=2)
+        tk.Label(depth_frame, text="Max. Tiefe (max_depth):", width=30, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(depth_frame, from_=10, to=50, increment=5,
+                   textvariable=self.rf_dedicated_max_depth, width=15).pack(side=tk.LEFT, padx=5)
+        ToolTip(depth_frame, "30-40 = Sehr flexibel\n20-30 = Gut regularisiert (Standard)")
+
+        # Min Leaf
+        leaf_frame = tk.Frame(rf_hyper_frame)
+        leaf_frame.pack(fill=tk.X, pady=2)
+        tk.Label(leaf_frame, text="Min Samples/Blatt:", width=30, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(leaf_frame, from_=1, to=20, increment=1,
+                   textvariable=self.rf_dedicated_min_leaf, width=15).pack(side=tk.LEFT, padx=5)
+
+        # Min Split
+        split_frame = tk.Frame(rf_hyper_frame)
+        split_frame.pack(fill=tk.X, pady=2)
+        tk.Label(split_frame, text="Min Samples/Split:", width=30, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(split_frame, from_=2, to=40, increment=2,
+                   textvariable=self.rf_dedicated_min_split, width=15).pack(side=tk.LEFT, padx=5)
+
+        # Max Samples
+        samples_frame = tk.Frame(rf_hyper_frame)
+        samples_frame.pack(fill=tk.X, pady=2)
+        tk.Label(samples_frame, text="Max Samples/Baum (0-1):", width=30, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(samples_frame, from_=0.5, to=1.0, increment=0.05,
+                   textvariable=self.rf_dedicated_max_samples, width=15, format='%.2f').pack(side=tk.LEFT, padx=5)
+
+        # Window Sizes
+        windows_frame = tk.Frame(rf_hyper_frame)
+        windows_frame.pack(fill=tk.X, pady=2)
+        tk.Label(windows_frame, text="Window-Größen (Frames):", width=30, anchor=tk.W).pack(side=tk.LEFT)
+        tk.Entry(windows_frame, textvariable=self.rf_dedicated_window_sizes, width=20).pack(side=tk.LEFT, padx=5)
+        ToolTip(windows_frame, "Komma-separiert: '32, 48, 64, 96'\nMulti-Window = robuster!")
+
+        # Step Fraction
+        step_frame = tk.Frame(rf_hyper_frame)
+        step_frame.pack(fill=tk.X, pady=2)
+        tk.Label(step_frame, text="Sliding Step Fraction (0-1):", width=30, anchor=tk.W).pack(side=tk.LEFT)
+        ttk.Spinbox(step_frame, from_=0.1, to=1.0, increment=0.1,
+                   textvariable=self.rf_dedicated_step_fraction, width=15, format='%.2f').pack(side=tk.LEFT, padx=5)
+        ToolTip(step_frame, "0.5 = 50% Overlap (Standard)\n1.0 = Kein Overlap")
+
+        # Info Box
+        info_frame = ttk.LabelFrame(container, text="ℹ️ Trainings-Strategie", padding=10)
+        info_frame.pack(fill=tk.X, padx=5, pady=10)
+
+        tk.Label(
+            info_frame,
+            text="✨ Der RF wird über ALLE Polymerisationszeiten hinweg trainiert!\n"
+                 "→ Robuste Klassifikation für alle Diffusionsarten, unabhängig vom Polygrad",
+            font=("Arial", 9),
+            fg="#2c3e50",
+            justify=tk.LEFT
+        ).pack(anchor=tk.W, pady=5)
+
+        # ====================================================================
+        # TRAINING BUTTON
+        # ====================================================================
+        button_frame = tk.Frame(container)
+        button_frame.pack(pady=20)
+
+        self.rf_training_button = tk.Button(
+            button_frame,
+            text="🚀 RF-TRAINING STARTEN",
+            font=("Arial", 14, "bold"),
+            bg="#16a085",
+            fg="white",
+            padx=30,
+            pady=15,
+            command=self._start_dedicated_rf_training
+        )
+        self.rf_training_button.pack()
+
+        # Info
+        tk.Label(
+            container,
+            text="ℹ️  Das Training generiert KEINE TIFFs - nur Trajektorien-Metadata für maximale Geschwindigkeit!\n"
+                 "📦 Output: rf_model.joblib, feature_names.json, RF_USAGE_GUIDE.md",
+            font=("Arial", 9),
+            fg="#7f8c8d",
+            justify=tk.CENTER
+        ).pack(pady=10)
+
+    # ========================================================================
+    # TRACK ANALYSIS TAB
     # ========================================================================
 
     def _create_analysis_tab(self):
@@ -1995,6 +2323,524 @@ class TIFFSimulatorGUI_V4:
         )
         if path:
             self.analysis_output_dir.set(path)
+
+    # ========================================================================
+    # RF TRAINING HELPERS
+    # ========================================================================
+
+    def _browse_rf_output_dir(self):
+        """Browse for RF training output directory."""
+        path = filedialog.askdirectory(
+            title="Wähle Output-Verzeichnis für RF-Training"
+        )
+        if path:
+            self.rf_dedicated_output_dir.set(path)
+
+    def _start_dedicated_rf_training(self):
+        """Startet das dedizierte RF-Training in einem separaten Thread."""
+        if self.is_running:
+            messagebox.showwarning("Training läuft", "Es läuft bereits ein Training!")
+            return
+
+        # Validation
+        output_dir = Path(self.rf_dedicated_output_dir.get())
+        if not output_dir.parent.exists():
+            messagebox.showerror("Fehler", f"Parent-Ordner existiert nicht:\n{output_dir.parent}")
+            return
+
+        # Parse poly times
+        try:
+            poly_times_str = self.rf_dedicated_poly_times.get()
+            poly_times = [float(t.strip()) for t in poly_times_str.split(",") if t.strip()]
+            if not poly_times:
+                raise ValueError("Keine gültigen Polymerisationszeiten!")
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Ungültige Polymerisationszeiten:\n{e}")
+            return
+
+        # Parse window sizes
+        try:
+            window_str = self.rf_dedicated_window_sizes.get()
+            window_sizes = [int(w.strip()) for w in window_str.split(",") if w.strip()]
+            if not window_sizes:
+                raise ValueError("Keine gültigen Window-Größen!")
+        except Exception as e:
+            messagebox.showerror("Fehler", f"Ungültige Window-Größen:\n{e}")
+            return
+
+        # Disable button
+        self.rf_training_button.config(state=tk.DISABLED)
+        self.is_running = True
+
+        # Start training thread
+        self.simulation_thread = threading.Thread(
+            target=self._run_dedicated_rf_training,
+            args=(output_dir, poly_times, window_sizes),
+            daemon=True
+        )
+        self.simulation_thread.start()
+
+    def _run_dedicated_rf_training(self, output_dir: Path, poly_times: List[float], window_sizes: List[int]):
+        """Führt das dedizierte RF-Training aus (läuft in separatem Thread)."""
+        import time
+        start_time = time.time()
+
+        try:
+            self._update_status("🌲 Starte dediziertes RF-Training...")
+            self._update_progress(5)
+
+            # Create output directory
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Import dependencies
+            from tiff_simulator_v3 import TIFFSimulatorOptimized, DetectorPreset, TrajectoryGenerator
+            from rf_trainer import RandomForestTrainer, RFTrainingConfig
+
+            # Get parameters from GUI
+            num_frames = self.rf_dedicated_num_frames.get()
+            tracks_per_type = self.rf_dedicated_tracks_per_type.get()
+            frame_rate = self.rf_dedicated_frame_rate.get()
+            d_initial = self.rf_dedicated_d_initial.get()
+
+            # Create detector
+            detector = self._create_custom_detector()
+
+            # RF Config
+            rf_config = RFTrainingConfig(
+                window_sizes=tuple(window_sizes),
+                step_size_fraction=self.rf_dedicated_step_fraction.get(),
+                n_estimators=self.rf_dedicated_n_estimators.get(),
+                max_depth=self.rf_dedicated_max_depth.get(),
+                min_samples_leaf=self.rf_dedicated_min_leaf.get(),
+                min_samples_split=self.rf_dedicated_min_split.get(),
+                max_samples=self.rf_dedicated_max_samples.get(),
+            )
+
+            self._update_status(f"🎬 Generiere Trajektorien für {len(poly_times)} Polymerisationsgrade...")
+            self._update_progress(10)
+
+            # Initialize RF Trainer (standard, poly-feature handling wird danach gemacht)
+            rf_trainer = RandomForestTrainer(output_dir, rf_config)
+
+            total_tracks = len(poly_times) * 4 * tracks_per_type  # 4 diffusion types
+            processed_tracks = 0
+
+            # Generate trajectories for each poly time
+            for poly_idx, t_poly in enumerate(poly_times):
+                self._update_status(f"🎬 Polymerisationszeit {t_poly} min ({poly_idx+1}/{len(poly_times)})...")
+                progress = 10 + int((poly_idx / len(poly_times)) * 70)
+                self._update_progress(progress)
+
+                # Create trajectory generator
+                traj_gen = TrajectoryGenerator(
+                    D_initial=d_initial,
+                    t_poly_min=t_poly,
+                    frame_rate_hz=frame_rate,
+                    pixel_size_um=detector.pixel_size_um,
+                    enable_switching=True,
+                    polymerization_acceleration_factor=detector.metadata.get("polymerization_acceleration_factor", 1.0)
+                )
+
+                # Generate tracks for each diffusion type
+                for diffusion_type in ["normal", "subdiffusion", "confined", "superdiffusion"]:
+                    self._update_status(f"   → {diffusion_type} @ {t_poly}min...")
+
+                    # Generate multiple tracks
+                    for track_idx in range(tracks_per_type):
+                        # Random start position
+                        start_pos = (
+                            np.random.uniform(10, 100),  # x [µm]
+                            np.random.uniform(10, 100),  # y [µm]
+                            np.random.uniform(-0.5, 0.5)  # z [µm]
+                        )
+
+                        # Generate trajectory
+                        trajectory, switch_log = traj_gen.generate_trajectory(
+                            start_pos,
+                            num_frames,
+                            diffusion_type=diffusion_type
+                        )
+
+                        # Create metadata (similar to TIFF metadata)
+                        metadata = {
+                            "diffusion": {
+                                "t_poly_min": t_poly,
+                                "frame_rate_hz": frame_rate,
+                                "D_initial": d_initial,
+                            },
+                            "trajectories": [{
+                                "positions": trajectory,
+                                "diffusion_type": diffusion_type,
+                                "switch_log": switch_log,
+                                "num_switches": len(switch_log)
+                            }]
+                        }
+
+                        # Feed to RF trainer
+                        rf_trainer.update_with_metadata(metadata)
+
+                        processed_tracks += 1
+
+                        # Update progress occasionally
+                        if processed_tracks % 100 == 0:
+                            tracks_progress = 10 + int((processed_tracks / total_tracks) * 70)
+                            self._update_progress(tracks_progress)
+
+            # Finalize and train RF
+            self._update_status("🌲 Trainiere Random Forest...")
+            self._update_progress(85)
+
+            rf_info = rf_trainer.finalize()
+
+            self._update_status("📝 Exportiere Dokumentation...")
+            self._update_progress(95)
+
+            # Export usage guide
+            self._export_rf_usage_guide(output_dir, rf_info, rf_config)
+
+            # Done
+            elapsed = time.time() - start_time
+            self._update_progress(100)
+            self._update_status(f"✅ RF-Training abgeschlossen! ({elapsed:.1f}s)")
+
+            # Show summary
+            def _show_summary():
+                summary = f"""
+🎉 RF-TRAINING ERFOLGREICH!
+
+📊 STATISTIKEN:
+   Samples: {rf_info.get('samples', 0)}
+   Labels: {rf_info.get('labels', {})}
+
+🌲 MODELL:
+   Bäume: {rf_config.n_estimators}
+   Tiefe: {rf_config.max_depth}
+   Training Accuracy: {rf_info.get('training_accuracy', 0):.4f}
+   OOB Score: {rf_info.get('oob_score', 0):.4f}
+
+📦 OUTPUT:
+   {output_dir}
+
+✅ Dateien:
+   - rf_model.joblib (Trainiertes Modell)
+   - rf_training_features.csv (Feature-Daten)
+   - rf_training_summary.json (Metriken)
+   - RF_USAGE_GUIDE.md (Dokumentation)
+
+⏱️  Zeit: {elapsed:.1f}s
+"""
+                messagebox.showinfo("RF-Training abgeschlossen", summary)
+
+            self.root.after(0, _show_summary)
+
+        except Exception as e:
+            import traceback
+            error_msg = f"❌ FEHLER beim RF-Training:\n{e}\n\n{traceback.format_exc()}"
+            print(error_msg)
+            self._update_status(f"❌ Fehler: {e}")
+
+            def _show_error():
+                messagebox.showerror("RF-Training Fehler", str(e))
+
+            self.root.after(0, _show_error)
+
+        finally:
+            self.is_running = False
+            self.root.after(0, lambda: self.rf_training_button.config(state=tk.NORMAL))
+            self.root.after(0, lambda: self._update_progress(0))
+
+    def _export_rf_usage_guide(self, output_dir: Path, rf_info: Dict, rf_config):
+        """Exportiert umfassende Nutzungs-Dokumentation für das RF-Modell."""
+        guide_path = output_dir / "RF_USAGE_GUIDE.md"
+
+        feature_names = rf_info.get("feature_names", [])
+
+        guide_content = f"""# 🌲 Random Forest Model - Usage Guide
+
+## 📦 Modell-Übersicht
+
+Dieses RF-Modell wurde mit **{rf_info.get('samples', 0)} Samples** trainiert und erreicht:
+- **Training Accuracy**: {rf_info.get('training_accuracy', 0):.4f}
+- **OOB Score**: {rf_info.get('oob_score', 0):.4f}
+
+### Klassifizierte Diffusionstypen:
+{self._format_labels_md(rf_info.get('labels', {}))}
+
+### Modell-Parameter:
+- **Anzahl Bäume**: {rf_config.n_estimators}
+- **Max. Tiefe**: {rf_config.max_depth}
+- **Min Samples/Blatt**: {rf_config.min_samples_leaf}
+- **Min Samples/Split**: {rf_config.min_samples_split}
+- **Window-Größen**: {rf_config.window_sizes}
+
+---
+
+## 🔢 Features (Total: {len(feature_names)})
+
+Das Modell verwendet folgende Features pro Track-Fenster:
+
+{self._format_feature_list_md(feature_names)}
+
+---
+
+## 🚀 Nutzung in Python
+
+### 1. Modell laden
+
+```python
+import joblib
+import numpy as np
+from pathlib import Path
+
+# Lade trainiertes Modell
+model_path = Path("{output_dir}") / "rf_model.joblib"
+rf_model = joblib.load(model_path)
+
+print(f"Modell geladen: {{type(rf_model)}}")
+print(f"Classes: {{rf_model.classes_}}")
+```
+
+### 2. Features aus Trajektorie berechnen
+
+```python
+def calculate_features(positions, frame_rate_hz=20.0):
+    \"\"\"
+    Berechnet alle {len(feature_names)} Features aus einer Trajektorie.
+
+    Parameters:
+    -----------
+    positions : np.ndarray
+        Trajektorie (N_frames, 3) [µm] - (x, y, z)
+    frame_rate_hz : float
+        Frame-Rate [Hz]
+
+    Returns:
+    --------
+    np.ndarray : Feature-Vektor (shape: ({len(feature_names)},))
+    \"\"\"
+
+    # Berechne Schritte (lateral x,y)
+    steps_xy = np.sqrt(np.sum(np.diff(positions[:, :2], axis=0)**2, axis=1))
+    steps_z = np.abs(np.diff(positions[:, 2]))
+
+    # 1-6: Step Statistics (XY)
+    mean_step_xy = np.mean(steps_xy)
+    std_step_xy = np.std(steps_xy)
+    median_step_xy = np.median(steps_xy)
+    mad_step_xy = np.median(np.abs(steps_xy - median_step_xy))
+    max_step_xy = np.max(steps_xy)
+    min_step_xy = np.min(steps_xy)
+
+    # 7-8: Step Statistics (Z)
+    mean_step_z = np.mean(steps_z)
+    std_step_z = np.std(steps_z)
+
+    # 9-12: Mean Squared Displacement (MSD)
+    def msd_at_lag(pos, lag):
+        displacements = pos[lag:] - pos[:-lag]
+        return np.mean(np.sum(displacements**2, axis=1))
+
+    msd_lag1 = msd_at_lag(positions, 1)
+    msd_lag2 = msd_at_lag(positions, 2)
+    msd_lag4 = msd_at_lag(positions, min(4, len(positions)//2))
+    msd_lag8 = msd_at_lag(positions, min(8, len(positions)//2))
+
+    # 13: MSD Log-Log Slope (Anomaler Exponent)
+    lags = np.array([1, 2, 4, 8])
+    msds = np.array([msd_lag1, msd_lag2, msd_lag4, msd_lag8])
+    if np.all(msds > 0):
+        msd_loglog_slope = np.polyfit(np.log(lags), np.log(msds), 1)[0]
+    else:
+        msd_loglog_slope = 0.0
+
+    # 14: Straightness
+    start_end_dist = np.linalg.norm(positions[-1] - positions[0])
+    path_length = np.sum(steps_xy)
+    straightness = start_end_dist / max(path_length, 1e-9)
+
+    # 15: Confinement Radius
+    centroid = np.mean(positions, axis=0)
+    distances = np.linalg.norm(positions - centroid, axis=1)
+    confinement_radius = np.max(distances)
+
+    # 16-17: Radius of Gyration + Asymmetry
+    rg_squared = np.mean(distances**2)
+    radius_of_gyration = np.sqrt(rg_squared)
+    gyration_asymmetry = np.std(distances) / max(radius_of_gyration, 1e-9)
+
+    # 18-19: Turning Angles
+    if len(steps_xy) > 1:
+        vectors = np.diff(positions[:, :2], axis=0)
+        dot_products = np.sum(vectors[:-1] * vectors[1:], axis=1)
+        magnitudes = np.linalg.norm(vectors[:-1], axis=1) * np.linalg.norm(vectors[1:], axis=1)
+        angles = np.arccos(np.clip(dot_products / np.maximum(magnitudes, 1e-9), -1, 1))
+        turning_angle_mean = np.mean(angles)
+        turning_angle_std = np.std(angles)
+    else:
+        turning_angle_mean = 0.0
+        turning_angle_std = 0.0
+
+    # 20-21: Step Percentiles
+    step_p90 = np.percentile(steps_xy, 90)
+    step_p10 = np.percentile(steps_xy, 10)
+
+    # 22: Bounding Box Area
+    x_range = np.ptp(positions[:, 0])
+    y_range = np.ptp(positions[:, 1])
+    bounding_box_area = x_range * y_range
+
+    # 23: Axial Range (Z)
+    axial_range = np.ptp(positions[:, 2])
+
+    # 24: Directional Persistence
+    if len(positions) > 2:
+        velocities = np.diff(positions[:, :2], axis=0)
+        speed = np.linalg.norm(velocities, axis=1)
+        if np.any(speed > 0):
+            directions = velocities / np.maximum(speed[:, None], 1e-9)
+            persistence = np.mean([np.dot(directions[i], directions[i+1])
+                                  for i in range(len(directions)-1)])
+        else:
+            persistence = 0.0
+    else:
+        persistence = 0.0
+    directional_persistence = persistence
+
+    # 25: Velocity Autocorrelation
+    if len(steps_xy) > 1:
+        velocities = steps_xy * frame_rate_hz
+        mean_vel = np.mean(velocities)
+        acf = np.correlate(velocities - mean_vel, velocities - mean_vel, mode='valid')[0]
+        acf /= max(np.var(velocities) * len(velocities), 1e-9)
+        velocity_autocorr = acf
+    else:
+        velocity_autocorr = 0.0
+
+    # 26-27: Step Skewness + Kurtosis
+    from scipy import stats
+    step_skewness = float(stats.skew(steps_xy))
+    step_kurtosis = float(stats.kurtosis(steps_xy))
+
+    # Feature-Vektor zusammenbauen
+    features = [
+        mean_step_xy, std_step_xy, median_step_xy, mad_step_xy,
+        max_step_xy, min_step_xy, mean_step_z, std_step_z,
+        msd_lag1, msd_lag2, msd_lag4, msd_lag8,
+        msd_loglog_slope, straightness, confinement_radius,
+        radius_of_gyration, gyration_asymmetry,
+        turning_angle_mean, turning_angle_std,
+        step_p90, step_p10, bounding_box_area, axial_range,
+        directional_persistence, velocity_autocorr,
+        step_skewness, step_kurtosis
+    ]
+
+    return np.array(features, dtype=np.float32)
+```
+
+### 3. Vorhersage für neue Trajektorie
+
+```python
+# Beispiel-Trajektorie laden (z.B. aus TrackMate XML oder CSV)
+trajectory = np.array([...])  # Shape: (N_frames, 3)
+
+# Features berechnen
+features = calculate_features(
+    trajectory,
+    frame_rate_hz=20.0
+)
+
+# Vorhersage
+prediction = rf_model.predict([features])[0]
+probabilities = rf_model.predict_proba([features])[0]
+
+print(f"Predicted Label: {{prediction}}")
+print(f"Probabilities: {{dict(zip(rf_model.classes_, probabilities))}}")
+```
+
+---
+
+## 📊 Feature-Importanzen
+
+```python
+import matplotlib.pyplot as plt
+
+# Feature-Importanzen aus Modell
+importances = rf_model.feature_importances_
+feature_names = {feature_names}
+
+# Sortieren
+indices = np.argsort(importances)[::-1]
+
+# Plot
+plt.figure(figsize=(10, 6))
+plt.bar(range(len(importances)), importances[indices])
+plt.xticks(range(len(importances)), [feature_names[i] for i in indices], rotation=90)
+plt.xlabel('Feature')
+plt.ylabel('Importance')
+plt.title('RF Feature Importances')
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+## 🔗 Integration in andere Software
+
+### TrackMate (Fiji/ImageJ)
+
+1. Exportiere Tracks als XML
+2. Parse XML mit Python (z.B. `xml.etree.ElementTree`)
+3. Berechne Features pro Track
+4. Klassifiziere mit RF-Modell
+5. Füge Klassifikation zurück zu TrackMate hinzu
+
+### MATLAB
+
+```matlab
+% Lade Modell (erfordert Python-Bridge)
+py.joblib.load("{output_dir}/rf_model.joblib");
+
+% Oder: Exportiere Entscheidungsbaum-Regeln und implementiere in MATLAB
+```
+
+---
+
+## 📝 Lizenz & Zitation
+
+Dieses Modell wurde generiert mit dem **Hyperrealistischen TIFF Simulator V4.0**.
+
+Bei Verwendung in Publikationen bitte zitieren:
+- TIFF Simulator V4.0 (2025)
+- Random Forest Classifier für Diffusions-Klassifikation
+
+---
+
+**Erstellt am**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+**Modell-Pfad**: `{output_dir}/rf_model.joblib`
+"""
+
+        with open(guide_path, 'w', encoding='utf-8') as f:
+            f.write(guide_content)
+
+        print(f"✅ RF Usage Guide exportiert: {guide_path}")
+
+    def _format_labels_md(self, labels_dict):
+        """Formatiert Labels für Markdown."""
+        lines = []
+        for label, count in sorted(labels_dict.items()):
+            lines.append(f"- **{label}**: {count} Samples")
+        return "\n".join(lines) if lines else "- (Keine Labels)"
+
+    def _format_feature_list_md(self, feature_names):
+        """Formatiert Feature-Liste für Markdown."""
+        lines = []
+        for idx, name in enumerate(feature_names, 1):
+            lines.append(f"{idx}. `{name}`")
+        return "\n".join(lines)
+
+    # ========================================================================
+    # ANALYSIS TAB HELPERS
+    # ========================================================================
 
     def _update_analysis_preview(self):
         """Update preview with XML statistics."""

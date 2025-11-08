@@ -99,8 +99,14 @@ TDI_PRESET = DetectorPreset(
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm]
         "astig_z0_um": 0.5,  # Charakteristische Länge für Astigmatismus [µm]
         "astig_coeffs": {"A_x": 1.0, "B_x": 0.0, "A_y": -0.5, "B_y": 0.0},  # Astigmatismus-Koeffizienten
-        "refractive_index_correction": 1.0,  # Brechungsindex-Korrektur: z_scheinbar = z_tatsächlich * factor
-                                               # Typisch: n_medium/n_immersion (z.B. 1.33/1.518 ≈ 0.876 für Wasser/Öl)
+        "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
+        # ERWEITERTE Brechungsindex-Korrektur (NEU!)
+        "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
+        "n_oil": 1.518,       # Brechungsindex Immersionsöl (z.B. Olympus TIRF-Öl)
+        "n_glass": 1.523,     # Brechungsindex Deckglas (High Precision Coverslide)
+        "n_polymer": 1.47,    # Brechungsindex Polymer/Medium (z.B. 1.49 für PMMA, 1.33 für Wasser)
+        "NA": 1.50,           # Numerische Apertur des Objektivs (z.B. 1.50 für TIRF-Objektiv)
+        "d_glass_um": 170.0,  # Deckglas-Dicke [µm] (typisch: 170 µm für #1.5 High Precision Slides)
         # Ausleuchtungsgradient (hyperrealistisch)
         "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
         "illumination_gradient_type": "radial",  # "radial", "linear_x", "linear_y", "corner"
@@ -133,8 +139,14 @@ TETRASPECS_PRESET = DetectorPreset(
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm]
         "astig_z0_um": 0.5,  # Charakteristische Länge für Astigmatismus [µm]
         "astig_coeffs": {"A_x": 1.0, "B_x": 0.0, "A_y": -0.5, "B_y": 0.0},  # Astigmatismus-Koeffizienten
-        "refractive_index_correction": 1.0,  # Brechungsindex-Korrektur: z_scheinbar = z_tatsächlich * factor
-                                               # Typisch: n_medium/n_immersion (z.B. 1.33/1.518 ≈ 0.876 für Wasser/Öl)
+        "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
+        # ERWEITERTE Brechungsindex-Korrektur (NEU!)
+        "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
+        "n_oil": 1.518,       # Brechungsindex Immersionsöl (z.B. Olympus TIRF-Öl)
+        "n_glass": 1.523,     # Brechungsindex Deckglas (High Precision Coverslide)
+        "n_polymer": 1.47,    # Brechungsindex Polymer/Medium (z.B. 1.49 für PMMA, 1.33 für Wasser)
+        "NA": 1.50,           # Numerische Apertur des Objektivs (z.B. 1.50 für TIRF-Objektiv)
+        "d_glass_um": 170.0,  # Deckglas-Dicke [µm] (typisch: 170 µm für #1.5 High Precision Slides)
         # Ausleuchtungsgradient (hyperrealistisch)
         "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
         "illumination_gradient_type": "radial",  # "radial", "linear_x", "linear_y", "corner"
@@ -142,6 +154,107 @@ TETRASPECS_PRESET = DetectorPreset(
         "polymerization_acceleration_factor": 1.0  # 1.0 = Standard, 1.5 = 50% schneller, etc.
     }
 )
+
+
+# ============================================================================
+# ERWEITERTE BRECHUNGSINDEX-KORREKTUR (NEU!)
+# ============================================================================
+
+def calculate_advanced_refractive_correction(
+    z_apparent: np.ndarray,
+    n_oil: float,
+    n_glass: float,
+    n_polymer: float,
+    NA: float,
+    d_glass_um: float
+) -> np.ndarray:
+    """
+    Berechnet physikalisch korrekte z-Korrektur für TIRF-Mikroskopie.
+
+    Basiert auf der Theorie der sphärischen Aberration durch Brechungsindex-
+    Mismatch zwischen Immersionsöl, Deckglas und Probe.
+
+    Physikalische Grundlagen:
+    -------------------------
+    Die scheinbare z-Position (z_apparent) weicht von der wahren Position (z_true)
+    ab durch drei Effekte:
+
+    1. BASIS-SKALIERUNG: n_polymer / n_oil
+       - Grundlegende Brechung durch Medium-Übergang
+
+    2. NA-ABHÄNGIGER TERM: sqrt(n_oil² - NA²) / sqrt(n_polymer² - NA²)
+       - Berücksichtigt Apertur-begrenzte Abbildung
+       - Wichtig bei hoher NA (TIRF: NA ≈ 1.45-1.50)
+
+    3. TIEFENABHÄNGIGER TERM: 1 + (d_glass / z) * (1 - n_glass / n_polymer)
+       - Deckglas-Dicke induziert zusätzliche Aberration
+       - Effekt nimmt mit Fokustiefe ab
+
+    Gesamtformel:
+    -------------
+    z_true = z_apparent * f_base * f_na * f_depth
+
+    wobei:
+    - f_base = n_polymer / n_oil
+    - f_na = sqrt(n_oil² - NA²) / sqrt(n_polymer² - NA²)
+    - f_depth = 1 + (d_glass / z_apparent) * (1 - n_glass / n_polymer)
+
+    Parameters:
+    -----------
+    z_apparent : np.ndarray
+        Scheinbare z-Positionen [µm] (vor Korrektur)
+    n_oil : float
+        Brechungsindex Immersionsöl (typisch: 1.518 für Olympus TIRF-Öl)
+    n_glass : float
+        Brechungsindex Deckglas (typisch: 1.523 für High Precision Coverslide)
+    n_polymer : float
+        Brechungsindex Polymer/Medium (z.B. 1.47-1.49 für PMMA, 1.33 für Wasser)
+    NA : float
+        Numerische Apertur des Objektivs (z.B. 1.50 für Olympus UPLAPO100XOHR)
+    d_glass_um : float
+        Deckglas-Dicke [µm] (typisch: 170 µm für #1.5 High Precision Slides)
+
+    Returns:
+    --------
+    np.ndarray : Korrigierte z-Positionen [µm]
+
+    Beispiel:
+    ---------
+    >>> z_app = np.array([0.0, 0.5, 1.0, 1.5, 2.0])  # µm
+    >>> z_corr = calculate_advanced_refractive_correction(
+    ...     z_app, n_oil=1.518, n_glass=1.523, n_polymer=1.47, NA=1.50, d_glass_um=170.0
+    ... )
+
+    Referenzen:
+    -----------
+    - Pawley, J. (2006): Handbook of Biological Confocal Microscopy
+    - Hell, S. W. (2009): Far-field optical nanoscopy
+    - Diaspro, A. (2002): Confocal and Two-Photon Microscopy
+    """
+
+    # Sicherheit: Vermeide Division durch 0
+    z_safe = np.where(np.abs(z_apparent) < 1e-6, 1e-6, z_apparent)
+
+    # 1. BASIS-SKALIERUNG
+    f_base = n_polymer / n_oil
+
+    # 2. NA-ABHÄNGIGER TERM
+    # Prüfe ob NA physikalisch sinnvoll ist (NA < n_oil und NA < n_polymer)
+    if NA >= n_oil or NA >= n_polymer:
+        # Fallback auf einfache Korrektur wenn NA zu groß
+        print(f"⚠️  WARNUNG: NA={NA:.3f} >= n_oil={n_oil:.3f} oder n_polymer={n_polymer:.3f}")
+        print(f"    → Verwende vereinfachte Korrektur (nur f_base)")
+        f_na = 1.0
+    else:
+        f_na = np.sqrt(n_oil**2 - NA**2) / np.sqrt(n_polymer**2 - NA**2)
+
+    # 3. TIEFENABHÄNGIGER TERM (Deckglas-Aberration)
+    f_depth = 1.0 + (d_glass_um / z_safe) * (1.0 - n_glass / n_polymer)
+
+    # Gesamtkorrektur
+    z_corrected = z_apparent * f_base * f_na * f_depth
+
+    return z_corrected
 
 
 # ============================================================================
@@ -537,17 +650,32 @@ class PSFGeneratorOptimized:
         self._sigma_eps = 1e-6
 
         # Astigmatismus-Parameter und Brechungsindex-Korrektur
+        meta = getattr(detector, 'metadata', {}) or {}
         if astigmatism:
-            meta = getattr(detector, 'metadata', {}) or {}
             self.z0_um = float(meta.get("astig_z0_um", 0.5))
             coeffs = meta.get("astig_coeffs", {}) or {}
             self.Ax = float(coeffs.get("A_x", 1.0))
             self.Bx = float(coeffs.get("B_x", 0.0))
             self.Ay = float(coeffs.get("A_y", -0.5))
             self.By = float(coeffs.get("B_y", 0.0))
-            self.refractive_correction = float(meta.get("refractive_index_correction", 1.0))
+
+            # ERWEITERTE Brechungsindex-Korrektur (NEU!)
+            self.use_advanced_correction = bool(meta.get("use_advanced_refractive_correction", False))
+            if self.use_advanced_correction:
+                # Lade alle Parameter für erweiterte Korrektur
+                self.n_oil = float(meta.get("n_oil", 1.518))
+                self.n_glass = float(meta.get("n_glass", 1.523))
+                self.n_polymer = float(meta.get("n_polymer", 1.47))
+                self.NA = float(meta.get("NA", 1.50))
+                self.d_glass_um = float(meta.get("d_glass_um", 170.0))
+                self.refractive_correction = None  # Nicht verwendet bei erweiterter Korrektur
+            else:
+                # Legacy: Einfacher Korrekturfaktor
+                self.refractive_correction = float(meta.get("refractive_index_correction", 1.0))
+                self.use_advanced_correction = False
         else:
             self.refractive_correction = 1.0
+            self.use_advanced_correction = False
 
         # Pre-compute grids
         self._coord_grids = {}
@@ -591,7 +719,20 @@ class PSFGeneratorOptimized:
         # Berechne alle sigmas auf einmal
         if self.astigmatism:
             # Brechungsindex-Korrektur auf z-Positionen anwenden
-            z_corrected = z_positions * self.refractive_correction
+            if self.use_advanced_correction:
+                # ERWEITERTE PHYSIKALISCHE KORREKTUR (NEU!)
+                z_corrected = calculate_advanced_refractive_correction(
+                    z_positions,
+                    n_oil=self.n_oil,
+                    n_glass=self.n_glass,
+                    n_polymer=self.n_polymer,
+                    NA=self.NA,
+                    d_glass_um=self.d_glass_um
+                )
+            else:
+                # Legacy: Einfache Korrektur
+                z_corrected = z_positions * self.refractive_correction
+
             z_norm = z_corrected / self.z0_um
             term_x = 1.0 + self.Ax * (z_norm**2) + self.Bx * (z_norm**4)
             term_y = 1.0 + self.Ay * (z_norm**2) + self.By * (z_norm**4)
