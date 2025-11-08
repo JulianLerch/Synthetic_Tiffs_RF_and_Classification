@@ -257,9 +257,6 @@ class TIFFSimulatorGUI_V4:
         self.rf_dedicated_max_samples = tk.DoubleVar(value=0.8)
         self.rf_dedicated_window_sizes = tk.StringVar(value="32, 48, 64, 96")
         self.rf_dedicated_step_fraction = tk.DoubleVar(value=0.5)
-        # Neue Features
-        self.rf_dedicated_include_poly_feature = tk.BooleanVar(value=True)  # Poly als Feature!
-        self.rf_dedicated_normalize_poly = tk.BooleanVar(value=True)  # Normalisieren (0-1)
 
         # ===== EXPORT =====
         self.export_metadata = tk.BooleanVar(value=True)
@@ -1966,37 +1963,18 @@ class TIFFSimulatorGUI_V4:
                    textvariable=self.rf_dedicated_step_fraction, width=15, format='%.2f').pack(side=tk.LEFT, padx=5)
         ToolTip(step_frame, "0.5 = 50% Overlap (Standard)\n1.0 = Kein Overlap")
 
-        # ====================================================================
-        # POLYMERISATIONSGRAD ALS FEATURE
-        # ====================================================================
-        poly_feature_frame = ttk.LabelFrame(container, text="🎯 Polymerisationsgrad als Feature (NEU!)", padding=10)
-        poly_feature_frame.pack(fill=tk.X, padx=5, pady=5)
+        # Info Box
+        info_frame = ttk.LabelFrame(container, text="ℹ️ Trainings-Strategie", padding=10)
+        info_frame.pack(fill=tk.X, padx=5, pady=10)
 
         tk.Label(
-            poly_feature_frame,
-            text="⚡ Aktiviere Poly-Feature für robuste Klassifikation über alle Polymerisationsgrade!",
-            font=("Arial", 9, "bold"),
-            fg="#27ae60"
-        ).pack(pady=5)
-
-        ttk.Checkbutton(
-            poly_feature_frame,
-            text="✅ Polymerisationszeit als zusätzliches Feature verwenden",
-            variable=self.rf_dedicated_include_poly_feature
+            info_frame,
+            text="✨ Der RF wird über ALLE Polymerisationszeiten hinweg trainiert!\n"
+                 "→ Robuste Klassifikation für alle Diffusionsarten, unabhängig vom Polygrad",
+            font=("Arial", 9),
+            fg="#2c3e50",
+            justify=tk.LEFT
         ).pack(anchor=tk.W, pady=5)
-
-        ttk.Checkbutton(
-            poly_feature_frame,
-            text="🔢 Poly-Feature normalisieren (0-1) - Empfohlen!",
-            variable=self.rf_dedicated_normalize_poly
-        ).pack(anchor=tk.W, pady=2)
-
-        tk.Label(
-            poly_feature_frame,
-            text="💡 Mit Poly-Feature kann der RF Diffusionsverhalten über Polymerisationszeiten hinweg lernen!",
-            font=("Arial", 8, "italic"),
-            fg="#7f8c8d"
-        ).pack(pady=(5, 0))
 
         # ====================================================================
         # TRAINING BUTTON
@@ -2404,8 +2382,6 @@ class TIFFSimulatorGUI_V4:
             tracks_per_type = self.rf_dedicated_tracks_per_type.get()
             frame_rate = self.rf_dedicated_frame_rate.get()
             d_initial = self.rf_dedicated_d_initial.get()
-            include_poly_feature = self.rf_dedicated_include_poly_feature.get()
-            normalize_poly = self.rf_dedicated_normalize_poly.get()
 
             # Create detector
             detector = self._create_custom_detector()
@@ -2501,7 +2477,7 @@ class TIFFSimulatorGUI_V4:
             self._update_progress(95)
 
             # Export usage guide
-            self._export_rf_usage_guide(output_dir, rf_info, rf_config, include_poly_feature)
+            self._export_rf_usage_guide(output_dir, rf_info, rf_config)
 
             # Done
             elapsed = time.time() - start_time
@@ -2554,13 +2530,11 @@ class TIFFSimulatorGUI_V4:
             self.root.after(0, lambda: self.rf_training_button.config(state=tk.NORMAL))
             self.root.after(0, lambda: self._update_progress(0))
 
-    def _export_rf_usage_guide(self, output_dir: Path, rf_info: Dict, rf_config, include_poly_feature: bool):
+    def _export_rf_usage_guide(self, output_dir: Path, rf_info: Dict, rf_config):
         """Exportiert umfassende Nutzungs-Dokumentation für das RF-Modell."""
         guide_path = output_dir / "RF_USAGE_GUIDE.md"
 
         feature_names = rf_info.get("feature_names", [])
-        if include_poly_feature and "poly_time_normalized" not in feature_names:
-            feature_names = feature_names + ["poly_time_normalized"]
 
         guide_content = f"""# 🌲 Random Forest Model - Usage Guide
 
@@ -2586,7 +2560,7 @@ Dieses RF-Modell wurde mit **{rf_info.get('samples', 0)} Samples** trainiert und
 
 Das Modell verwendet folgende Features pro Track-Fenster:
 
-{self._format_feature_list_md(feature_names, include_poly_feature)}
+{self._format_feature_list_md(feature_names)}
 
 ---
 
@@ -2610,7 +2584,7 @@ print(f"Classes: {{rf_model.classes_}}")
 ### 2. Features aus Trajektorie berechnen
 
 ```python
-def calculate_features(positions, frame_rate_hz=20.0, poly_time_min=None):
+def calculate_features(positions, frame_rate_hz=20.0):
     \"\"\"
     Berechnet alle {len(feature_names)} Features aus einer Trajektorie.
 
@@ -2620,8 +2594,6 @@ def calculate_features(positions, frame_rate_hz=20.0, poly_time_min=None):
         Trajektorie (N_frames, 3) [µm] - (x, y, z)
     frame_rate_hz : float
         Frame-Rate [Hz]
-    poly_time_min : float, optional
-        Polymerisationszeit [min] (nur wenn Poly-Feature aktiviert)
 
     Returns:
     --------
@@ -2743,14 +2715,6 @@ def calculate_features(positions, frame_rate_hz=20.0, poly_time_min=None):
         step_skewness, step_kurtosis
     ]
 
-{'    # POLY-FEATURE hinzufügen' if include_poly_feature else ''}
-{'    if poly_time_min is not None:' if include_poly_feature else ''}
-{'        # Normalisierung: 0-180 min → 0-1' if include_poly_feature else ''}
-{'        poly_normalized = poly_time_min / 180.0' if include_poly_feature else ''}
-{'        features.append(poly_normalized)' if include_poly_feature else ''}
-{'    else:' if include_poly_feature else ''}
-{'        features.append(0.0)  # Default' if include_poly_feature else ''}
-
     return np.array(features, dtype=np.float32)
 ```
 
@@ -2763,8 +2727,7 @@ trajectory = np.array([...])  # Shape: (N_frames, 3)
 # Features berechnen
 features = calculate_features(
     trajectory,
-    frame_rate_hz=20.0{',' if include_poly_feature else ''}
-{'    poly_time_min=60.0  # Falls Poly-Feature aktiviert' if include_poly_feature else ''}
+    frame_rate_hz=20.0
 )
 
 # Vorhersage
@@ -2849,14 +2812,11 @@ Bei Verwendung in Publikationen bitte zitieren:
             lines.append(f"- **{label}**: {count} Samples")
         return "\n".join(lines) if lines else "- (Keine Labels)"
 
-    def _format_feature_list_md(self, feature_names, include_poly):
+    def _format_feature_list_md(self, feature_names):
         """Formatiert Feature-Liste für Markdown."""
         lines = []
         for idx, name in enumerate(feature_names, 1):
-            if name == "poly_time_normalized" and include_poly:
-                lines.append(f"{idx}. `{name}` - **Polymerisationszeit (normalisiert 0-1)** 🎯 NEU!")
-            else:
-                lines.append(f"{idx}. `{name}`")
+            lines.append(f"{idx}. `{name}`")
         return "\n".join(lines)
 
     # ========================================================================
