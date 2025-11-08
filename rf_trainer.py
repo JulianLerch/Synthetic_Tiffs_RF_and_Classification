@@ -144,6 +144,14 @@ class RandomForestTrainer:
         "velocity_autocorr",
         "step_skewness",
         "step_kurtosis",
+        # NEUE FEATURES für anomale Diffusion
+        "msd_ratio_lag4",
+        "msd_ratio_lag8",
+        "d_eff_lag1",
+        "d_eff_lag4",
+        "d_eff_lag8",
+        "d_eff_variation",
+        "displacement_kurtosis",
     )
 
     def __init__(self, output_dir: Path, config: Optional[RFTrainingConfig] = None):
@@ -417,6 +425,29 @@ class RandomForestTrainer:
 
         axial_range = float(window_pos[:, 2].max() - window_pos[:, 2].min())
 
+        # Zusätzliche Features für bessere anomale Diffusions-Erkennung
+        # MSD-Ratio: Sollte ~1.0 für normal, <1.0 für sub, >1.0 für super sein
+        msd_ratio_4 = (msd_lag4 / (4.0 * msd_lag1 + 1e-12)) if msd_lag1 > 0 else 1.0
+        msd_ratio_8 = (msd_lag8 / (8.0 * msd_lag1 + 1e-12)) if msd_lag1 > 0 else 1.0
+
+        # Effektiver Diffusionskoeffizient aus verschiedenen Lags (für 2D!)
+        # D_eff = MSD / (4 * lag * dt), aber dt wird normalisiert
+        d_eff_lag1 = msd_lag1 / 4.0
+        d_eff_lag4 = msd_lag4 / 16.0
+        d_eff_lag8 = msd_lag8 / 32.0
+
+        # Variation im effektiven D (anomale Diffusion zeigt Lag-Abhängigkeit)
+        d_eff_variation = float(np.std([d_eff_lag1, d_eff_lag4, d_eff_lag8]))
+
+        # Displacement Kurtosis (Non-Gaussianity)
+        displacements_xy = np.linalg.norm(steps[:, :2], axis=1)
+        if len(displacements_xy) > 3:
+            disp_mean = np.mean(displacements_xy)
+            disp_std = np.std(displacements_xy) + 1e-12
+            disp_kurtosis = float(np.mean(((displacements_xy - disp_mean) / disp_std) ** 4))
+        else:
+            disp_kurtosis = 3.0  # Normal distribution
+
         feature_values = np.array([
             mean_step_xy,
             std_step_xy,
@@ -445,6 +476,14 @@ class RandomForestTrainer:
             velocity_autocorr,
             step_skewness,
             step_kurtosis,
+            # NEUE FEATURES für anomale Diffusion
+            float(msd_ratio_4),
+            float(msd_ratio_8),
+            float(d_eff_lag1),
+            float(d_eff_lag4),
+            float(d_eff_lag8),
+            float(d_eff_variation),
+            float(disp_kurtosis),
         ], dtype=np.float32)
 
         if np.any(~np.isfinite(feature_values)):
