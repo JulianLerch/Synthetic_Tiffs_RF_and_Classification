@@ -223,7 +223,7 @@ class TIFFSimulatorGUI_V4:
         self.analysis_preview_text = tk.StringVar(value="Keine XML geladen...")
         self.analysis_status = tk.StringVar(value="Bereit")
         self.batch_use_spot_range = tk.BooleanVar(value=True)
-        self.batch_subfolder_per_repeat = tk.BooleanVar(value=True)
+        self.batch_folder_structure = tk.StringVar(value="by_repeat")  # "by_repeat", "by_polytime", or "flat"
         # Legacy (falls benötigt)
         self.batch_preset = tk.StringVar(value="quick")
         self.batch_detector = tk.StringVar(value="TDI-G0")
@@ -1056,12 +1056,30 @@ class TIFFSimulatorGUI_V4:
         ttk.Spinbox(rep_row, from_=1, to=20, increment=1,
                    textvariable=self.batch_repeats, width=10).pack(side=tk.LEFT, padx=5)
 
-        folder_check = ttk.Checkbutton(
+        # Ordnerstruktur-Optionen
+        folder_label = tk.Label(repeat_frame, text="📁 Ordnerstruktur:", anchor=tk.W, font=("Segoe UI", 9, "bold"))
+        folder_label.pack(anchor=tk.W, pady=(10, 5))
+
+        ttk.Radiobutton(
             repeat_frame,
-            text="📁 Jede Wiederholung in eigenem Unterordner (repeat_1, repeat_2, ...)",
-            variable=self.batch_subfolder_per_repeat
-        )
-        folder_check.pack(anchor=tk.W, pady=5)
+            text="Nach Wiederholungen (repeat_1/, repeat_2/, ...)",
+            variable=self.batch_folder_structure,
+            value="by_repeat"
+        ).pack(anchor=tk.W, padx=20)
+
+        ttk.Radiobutton(
+            repeat_frame,
+            text="Nach Polymerisationszeit (t030min/, t060min/, ...)",
+            variable=self.batch_folder_structure,
+            value="by_polytime"
+        ).pack(anchor=tk.W, padx=20)
+
+        ttk.Radiobutton(
+            repeat_frame,
+            text="Alle Dateien in einem Ordner (keine Unterordner)",
+            variable=self.batch_folder_structure,
+            value="flat"
+        ).pack(anchor=tk.W, padx=20, pady=(0, 5))
 
         # ====================================================================
         # ASTIGMATISMUS
@@ -1647,7 +1665,7 @@ class TIFFSimulatorGUI_V4:
         spot_min = self.num_spots_min.get()
         spot_max = self.num_spots_max.get()
         astigmatism = self.batch_astig.get()
-        subfolder_per_repeat = self.batch_subfolder_per_repeat.get()
+        folder_structure = self.batch_folder_structure.get()  # "by_repeat", "by_polytime", or "flat"
 
         # Output-Verzeichnis
         base_dir = Path(self.output_dir.get())
@@ -1668,17 +1686,18 @@ class TIFFSimulatorGUI_V4:
 
         # Batch-Loop
         for repeat in range(1, repeats + 1):
-            # Unterordner?
-            if subfolder_per_repeat:
-                output_dir = base_dir / f"repeat_{repeat}"
-                output_dir.mkdir(parents=True, exist_ok=True)
-            else:
-                output_dir = base_dir
-                output_dir.mkdir(parents=True, exist_ok=True)
-
             for t_poly in poly_times:
                 current_task += 1
                 progress = int((current_task / total_tasks) * 90) + 5
+
+                # Ordnerstruktur basierend auf gewähltem Modus
+                if folder_structure == "by_repeat":
+                    output_dir = base_dir / f"repeat_{repeat}"
+                elif folder_structure == "by_polytime":
+                    output_dir = base_dir / f"t{int(t_poly):03d}min"
+                else:  # flat
+                    output_dir = base_dir
+                output_dir.mkdir(parents=True, exist_ok=True)
 
                 # Spot-Anzahl
                 if use_spot_range:
