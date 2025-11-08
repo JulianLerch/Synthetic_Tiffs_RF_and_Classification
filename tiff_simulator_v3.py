@@ -905,10 +905,11 @@ class TrajectoryGenerator:
             D = self.D_values[current_type]
             D_z = D * z_diffusion_factor
 
-            # Anomaler Exponent
-            alpha = 0.7 if current_type == "subdiffusion" else 1.0
+            # Anomaler Exponent (STÄRKERE WERTE für bessere Unterscheidbarkeit!)
+            # Literatur: sub = 0.3-0.7, normal = 1.0, super = 1.3-1.8
+            alpha = 0.5 if current_type == "subdiffusion" else 1.0
             if current_type == "superdiffusion":
-                alpha = 1.3
+                alpha = 1.5
 
             # Lateral (x, y) - volle Diffusion
             sigma_xy = np.sqrt(2.0 * D * (self.dt ** alpha))
@@ -921,9 +922,9 @@ class TrajectoryGenerator:
             step_z = np.random.normal(0, sigma_z, size=1).astype(np.float32)
             step = np.concatenate([step_xy, step_z])
 
-            # Confined Diffusion: Rückstellkraft
+            # Confined Diffusion: Rückstellkraft (STÄRKER für bessere Erkennbarkeit!)
             if current_type == "confined":
-                confinement_length = 0.5  # µm
+                confinement_length = 0.3  # µm (kleiner = stärkeres Confinement)
                 k = D / (confinement_length ** 2)
                 drift = -k * self.dt * (trajectory[i-1] - start_pos)
                 # z-Confinement ist stärker!

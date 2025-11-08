@@ -250,11 +250,11 @@ class TIFFSimulatorGUI_V4:
         self.rf_dedicated_frame_rate = tk.DoubleVar(value=20.0)
         self.rf_dedicated_d_initial = tk.DoubleVar(value=0.24)
         # RF Hyperparameters (GROSSE Werte für bestes Modell!)
-        self.rf_dedicated_n_estimators = tk.IntVar(value=4096)  # 4096 Bäume!
-        self.rf_dedicated_max_depth = tk.IntVar(value=30)
-        self.rf_dedicated_min_leaf = tk.IntVar(value=3)
-        self.rf_dedicated_min_split = tk.IntVar(value=8)
-        self.rf_dedicated_max_samples = tk.DoubleVar(value=0.8)
+        self.rf_dedicated_n_estimators = tk.IntVar(value=2048)  # Reduziert für bessere Generalisierung
+        self.rf_dedicated_max_depth = tk.IntVar(value=20)      # Weniger Tiefe = weniger Overfitting
+        self.rf_dedicated_min_leaf = tk.IntVar(value=5)        # Mehr Samples pro Blatt = Regularisierung
+        self.rf_dedicated_min_split = tk.IntVar(value=10)      # Höherer Split-Threshold
+        self.rf_dedicated_max_samples = tk.DoubleVar(value=0.7) # Weniger Samples pro Baum
         self.rf_dedicated_window_sizes = tk.StringVar(value="32, 48, 64, 96")
         self.rf_dedicated_step_fraction = tk.DoubleVar(value=0.5)
 
@@ -1292,13 +1292,22 @@ class TIFFSimulatorGUI_V4:
             time_per_tiff = (frames * img_size) / 20000  # Sekunden (grobe Schätzung)
             total_time_min = (time_per_tiff * total_tiffs) / 60
 
+            # Folder structure description
+            folder_mode = self.batch_folder_structure.get()
+            if folder_mode == "by_repeat":
+                folder_desc = "Nach Wiederholungen (repeat_1/, repeat_2/, ...)"
+            elif folder_mode == "by_polytime":
+                folder_desc = "Nach Polyzeit (t030min/, t060min/, ...)"
+            else:
+                folder_desc = "Flach (alle in einem Ordner)"
+
             summary = (
                 f"📊 BATCH-KONFIGURATION:\n\n"
                 f"⏱️  Polyzeiten: {len(times)} Zeiten ({', '.join(str(int(t)) for t in times[:5])}{'...' if len(times) > 5 else ''} min)\n"
                 f"🔄 Wiederholungen: {repeats}x\n"
                 f"🎯 Spots: {spots_info}\n"
                 f"📐 Astigmatismus: {astig_info}\n"
-                f"📁 Unterordner: {'JA' if self.batch_subfolder_per_repeat.get() else 'NEIN'}\n"
+                f"📁 Ordnerstruktur: {folder_desc}\n"
                 f"🌲 Random Forest: {'AKTIV' if self.batch_train_rf.get() else 'aus'}\n\n"
                 f"═══════════════════\n"
                 f"📦 Gesamt TIFFs: {total_tiffs}\n"
