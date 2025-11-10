@@ -28,7 +28,11 @@ import numpy as np
 
 try:
     from tiff_simulator_v3 import (
-        TDI_PRESET, TETRASPECS_PRESET, TIFFSimulatorOptimized, save_tiff
+        TDI_PRESET,
+        TETRASPECS_PRESET,
+        TIFFSimulatorOptimized,
+        save_tiff,
+        evaluate_z_profile
     )
     from metadata_exporter import MetadataExporter
     from rf_trainer import RandomForestTrainer, RFTrainingConfig
@@ -165,6 +169,10 @@ class TIFFSimulatorGUI_V4:
         self._apply_detector_preset()
         self._update_mode_info()
 
+        # z-Profil Beobachter registrieren & initiales Summary anzeigen
+        self._register_z_profile_traces()
+        self._update_z_stack_summary()
+
         # Thread für Simulation
         self.simulation_thread = None
         self.is_running = False
@@ -210,6 +218,7 @@ class TIFFSimulatorGUI_V4:
         self.spot_intensity_sigma = tk.DoubleVar(value=0.25)
         self.frame_jitter_sigma = tk.DoubleVar(value=0.10)
         self.max_intensity = tk.DoubleVar(value=260.0)
+        self.wavelength_nm = tk.DoubleVar(value=580.0)
 
         # ===== ASTIGMATISM & 3D (NEU!) =====
         self.z_amp_um = tk.DoubleVar(value=1.2)       # OPTIMIERT: Größer für weiteren z-Range
@@ -217,10 +226,13 @@ class TIFFSimulatorGUI_V4:
         self.astig_z0_um = tk.DoubleVar(value=0.7)    # OPTIMIERT: Bessere Spreizung der Astigmatismus-Kurve
         self.astig_ax = tk.DoubleVar(value=1.5)       # OPTIMIERT: Stärkerer Astigmatismus für bessere Sichtbarkeit
         self.astig_ay = tk.DoubleVar(value=-1.2)      # OPTIMIERT: Stärkerer Astigmatismus für bessere Sichtbarkeit
+        self.astig_focus_offset_um = tk.DoubleVar(value=0.25)
+        self.spherical_aberration_strength = tk.DoubleVar(value=0.35)
+        self.axial_intensity_floor = tk.DoubleVar(value=0.15)
         self.refractive_index_correction = tk.DoubleVar(value=1.0)  # Legacy: Einfacher Faktor
 
         # ===== ERWEITERTE BRECHUNGSINDEX-KORREKTUR (NEU!) =====
-        self.use_advanced_refractive_correction = tk.BooleanVar(value=False)  # Aktiviert erweiterte Korrektur
+        self.use_advanced_refractive_correction = tk.BooleanVar(value=True)  # Aktiviert erweiterte Korrektur
         self.n_oil = tk.DoubleVar(value=1.518)        # Brechungsindex Immersionsöl
         self.n_glass = tk.DoubleVar(value=1.523)      # Brechungsindex Deckglas
         self.n_polymer = tk.DoubleVar(value=1.54)     # Brechungsindex Polymer/Medium (KORRIGIERT: war 1.47)
@@ -237,7 +249,8 @@ class TIFFSimulatorGUI_V4:
         # ===== Z-STACK (REALISTISCH FÜR TETRASPECS MESSUNG) =====
         self.z_min = tk.DoubleVar(value=-0.5)   # Realistisch: von -0.5 µm
         self.z_max = tk.DoubleVar(value=0.5)    # bis +0.5 µm (1 µm total range)
-        self.z_step = tk.DoubleVar(value=0.01)  # Sehr feine Steps: 0.01 µm (101 slices)
+        self.z_step = tk.DoubleVar(value=0.02)  # Feine Steps: 0.02 µm (61 slices)
+        self.z_stack_summary_var = tk.StringVar(value="")
 
         # ===== BATCH (KOMPLETT NEU!) =====
         self.batch_mode_enabled = tk.BooleanVar(value=False)  # Single vs Batch
@@ -749,6 +762,22 @@ class TIFFSimulatorGUI_V4:
         jitter_spin.pack(side=tk.LEFT, padx=5)
         ToolTip(jitter_spin, "Frame-zu-Frame Intensitätsschwankung\n0.10 = realistisch")
 
+        # Emissionswellenlänge
+        wavelength_frame = tk.Frame(psf_frame)
+        wavelength_frame.pack(fill=tk.X, pady=2)
+        tk.Label(wavelength_frame, text="Emission λ [nm]:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        wavelength_spin = ttk.Spinbox(
+            wavelength_frame,
+            from_=450.0,
+            to=700.0,
+            increment=5.0,
+            textvariable=self.wavelength_nm,
+            width=10,
+            format='%.1f'
+        )
+        wavelength_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(wavelength_spin, "Emissionswellenlänge der Fluorophore\n580 nm = Tetraspeck/TMR\n488 nm für GFP, 647 nm für Cy5")
+
         # Background
         bg_frame = ttk.LabelFrame(self.physics_tab, text="🌫️ Background & Noise", padding=10)
         bg_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -943,6 +972,54 @@ class TIFFSimulatorGUI_V4:
         ay_spin.pack(side=tk.LEFT, padx=5)
         ToolTip(ay_spin, "Astigmatismus y-Koeffizient\n-0.5 = Standard")
 
+        # Fokusversatz
+        focus_frame = tk.Frame(astig_coef_frame)
+        focus_frame.pack(fill=tk.X, pady=2)
+        tk.Label(focus_frame, text="Fokusversatz Δz [µm]:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        focus_spin = ttk.Spinbox(
+            focus_frame,
+            from_=0.0,
+            to=1.0,
+            increment=0.01,
+            textvariable=self.astig_focus_offset_um,
+            width=10,
+            format='%.2f'
+        )
+        focus_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(focus_spin, "Astigmatische Fokusverschiebung zwischen x- und y-Brennlinie\n0.25 µm = realistischer ThunderSTORM-Wert")
+
+        # Sphärische Aberration
+        aberr_frame = tk.Frame(astig_coef_frame)
+        aberr_frame.pack(fill=tk.X, pady=2)
+        tk.Label(aberr_frame, text="Sphärische Aberration:", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        aberr_spin = ttk.Spinbox(
+            aberr_frame,
+            from_=0.0,
+            to=1.0,
+            increment=0.05,
+            textvariable=self.spherical_aberration_strength,
+            width=10,
+            format='%.2f'
+        )
+        aberr_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(aberr_spin, "Stärke der Brechungsindex-bedingten Aberration\n0.35 = stark für Polymer vs. Öl")
+
+        # Axiale Intensitätsuntergrenze
+        axial_frame = tk.Frame(astig_coef_frame)
+        axial_frame.pack(fill=tk.X, pady=2)
+        tk.Label(axial_frame, text="Axiale Intensität (min):", width=25, anchor=tk.W).pack(side=tk.LEFT)
+        axial_spin = ttk.Spinbox(
+            axial_frame,
+            from_=0.0,
+            to=1.0,
+            increment=0.01,
+            textvariable=self.axial_intensity_floor,
+            width=10,
+            format='%.2f'
+        )
+        axial_spin.pack(side=tk.LEFT, padx=5)
+        ToolTip(axial_spin, "Minimaler Intensitätsfaktor entlang der z-Achse\nVerhindert völliges Auslöschen entfernter Slices")
+
         # Brechungsindex-Korrektur (Legacy, einfacher Faktor)
         ri_frame = tk.Frame(astig_coef_frame)
         ri_frame.pack(fill=tk.X, pady=2)
@@ -1059,6 +1136,28 @@ class TIFFSimulatorGUI_V4:
         zstep_spin.pack(side=tk.LEFT, padx=5)
         self.z_slices_label = tk.Label(zstep_frame, text="", font=("Arial", 9), fg="#27ae60")
         self.z_slices_label.pack(side=tk.LEFT, padx=10)
+
+        summary_frame = tk.Frame(zstack_frame)
+        summary_frame.pack(fill=tk.X, pady=(8, 2))
+        self.z_stack_summary_label = tk.Label(
+            summary_frame,
+            textvariable=self.z_stack_summary_var,
+            font=("Arial", 9),
+            fg="#2c3e50",
+            justify=tk.LEFT,
+            wraplength=420
+        )
+        self.z_stack_summary_label.pack(anchor=tk.W)
+
+        button_frame = tk.Frame(zstack_frame)
+        button_frame.pack(fill=tk.X, pady=(4, 0))
+        preset_btn = ttk.Button(button_frame, text="⚙️ ThunderSTORM Preset", command=self._apply_thunderstorm_preset)
+        preset_btn.pack(side=tk.LEFT, padx=2)
+        preview_btn = ttk.Button(button_frame, text="📈 Profil-Vorschau", command=self._show_z_profile_preview)
+        preview_btn.pack(side=tk.LEFT, padx=2)
+
+        if hasattr(self, 'z_stack_widgets'):
+            self.z_stack_widgets.extend([zmin_spin, zmax_stack_spin, zstep_spin, preset_btn, preview_btn])
 
         self._update_z_slices()
 
@@ -1523,26 +1622,200 @@ class TIFFSimulatorGUI_V4:
         except:
             pass
 
-    def _update_z_slices(self):
-        """Berechnet z-Slices."""
+    def _compute_z_positions(self) -> np.ndarray:
+        """Hilfsfunktion: berechnet alle z-Stufen basierend auf GUI-Werten."""
         try:
             z_min = self.z_min.get()
             z_max = self.z_max.get()
             z_step = self.z_step.get()
+        except tk.TclError:
+            return np.array([], dtype=np.float32)
 
-            if z_step > 0 and z_max > z_min:
-                n_slices = int((z_max - z_min) / z_step) + 1
-                self.z_slices_label.config(text=f"→ {n_slices} Slices")
+        if z_step <= 0 or z_max <= z_min:
+            return np.array([], dtype=np.float32)
+
+        return np.arange(z_min, z_max + 0.5 * z_step, z_step, dtype=np.float32)
+
+    def _update_z_slices(self):
+        """Aktualisiert die Anzeige zur Anzahl der z-Slices und Summary."""
+        try:
+            z_positions = self._compute_z_positions()
+            if z_positions.size > 0:
+                self.z_slices_label.config(text=f"→ {z_positions.size} Slices")
             else:
                 self.z_slices_label.config(text="❌ Ungültig")
-        except:
-            pass
+        except Exception:
+            self.z_slices_label.config(text="❌ Fehler")
+
+        self._update_z_stack_summary()
 
     def _browse_dir(self):
         """Ordner-Dialog."""
         directory = filedialog.askdirectory(initialdir=self.output_dir.get())
         if directory:
             self.output_dir.set(directory)
+
+    def _update_z_stack_summary(self):
+        """Aktualisiert das Info-Panel für die z-Stack-Physik."""
+        if not hasattr(self, "z_stack_summary_var"):
+            return
+
+        z_positions = self._compute_z_positions()
+        if z_positions.size == 0:
+            self.z_stack_summary_var.set("Bitte z_min < z_max und z_step > 0 wählen.")
+            if hasattr(self, "z_stack_summary_label"):
+                self.z_stack_summary_label.config(fg="#c0392b")
+            return
+
+        try:
+            detector = self._create_custom_detector()
+            profile = evaluate_z_profile(detector, z_positions, astigmatism=True)
+
+            z_corrected = profile.get("z_corrected", z_positions)
+            intensity = profile.get("intensity_scale", np.ones_like(z_positions))
+            sigma_x = profile.get("sigma_x", np.ones_like(z_positions))
+            sigma_y = profile.get("sigma_y", np.ones_like(z_positions))
+
+            sample_min = float(np.min(z_corrected)) if z_corrected.size else float(z_positions[0])
+            sample_max = float(np.max(z_corrected)) if z_corrected.size else float(z_positions[-1])
+            intensity_min = float(np.min(intensity)) if intensity.size else 1.0
+            intensity_max = float(np.max(intensity)) if intensity.size else 1.0
+            ratio = sigma_x / np.maximum(sigma_y, 1e-6)
+            ratio_min = float(np.min(ratio)) if ratio.size else 1.0
+            ratio_max = float(np.max(ratio)) if ratio.size else 1.0
+
+            rayleigh = profile.get("rayleigh_range_um")
+            use_adv = profile.get("use_advanced_refractive_correction", False)
+
+            summary_lines = [
+                f"Stage z: {z_positions[0]:+.2f} … {z_positions[-1]:+.2f} µm ({z_positions.size} Slices)",
+                f"Probe z (korrigiert): {sample_min:+.2f} … {sample_max:+.2f} µm",
+                f"Intensitätsskala: {intensity_min:.2f} – {intensity_max:.2f}",
+                f"σx/σy Verhältnis: {ratio_min:.2f} – {ratio_max:.2f}",
+                f"Refraktive Korrektur: {'aktiv' if use_adv else 'Legacy'}"
+            ]
+
+            if rayleigh and np.isfinite(rayleigh):
+                summary_lines.append(f"Rayleigh-Range: {rayleigh:.2f} µm")
+
+            self.z_stack_summary_var.set("\n".join(summary_lines))
+            if hasattr(self, "z_stack_summary_label"):
+                self.z_stack_summary_label.config(fg="#2c3e50")
+        except Exception as exc:
+            self.z_stack_summary_var.set(f"Fehler bei Profilberechnung: {exc}")
+            if hasattr(self, "z_stack_summary_label"):
+                self.z_stack_summary_label.config(fg="#c0392b")
+
+    def _register_z_profile_traces(self):
+        """Registriert trace-Handler für alle Parameter, die das z-Profil beeinflussen."""
+        if getattr(self, "_z_profile_traces_registered", False):
+            return
+
+        vars_to_trace = [
+            self.z_min,
+            self.z_max,
+            self.z_step,
+            self.astig_z0_um,
+            self.astig_ax,
+            self.astig_ay,
+            self.astig_focus_offset_um,
+            self.spherical_aberration_strength,
+            self.axial_intensity_floor,
+            self.use_advanced_refractive_correction,
+            self.refractive_index_correction,
+            self.n_oil,
+            self.n_glass,
+            self.n_polymer,
+            self.NA,
+            self.d_glass_um,
+            self.wavelength_nm,
+            self.z_amp_um,
+            self.z_max_um
+        ]
+
+        for var in vars_to_trace:
+            if hasattr(var, "trace_add"):
+                var.trace_add("write", lambda *args: self._update_z_stack_summary())
+
+        self._z_profile_traces_registered = True
+
+    def _apply_thunderstorm_preset(self):
+        """Setzt empfohlene Parameter für ThunderSTORM-Kalibrierung."""
+        self.z_min.set(-0.6)
+        self.z_max.set(0.6)
+        self.z_step.set(0.02)
+        self.astig_focus_offset_um.set(0.28)
+        self.spherical_aberration_strength.set(0.32)
+        self.axial_intensity_floor.set(0.18)
+        self.use_advanced_refractive_correction.set(True)
+        self.wavelength_nm.set(580.0)
+        self._update_z_slices()
+        self._update_status("🎯 ThunderSTORM Preset übernommen")
+
+    def _show_z_profile_preview(self):
+        """Öffnet eine Matplotlib-Vorschau des axialen PSF-Profils."""
+        z_positions = self._compute_z_positions()
+        if z_positions.size == 0:
+            messagebox.showwarning(
+                "Ungültiger Bereich",
+                "Bitte gültigen z-Bereich konfigurieren bevor die Vorschau geöffnet wird."
+            )
+            return
+
+        try:
+            detector = self._create_custom_detector()
+            profile = evaluate_z_profile(detector, z_positions, astigmatism=True)
+        except Exception as exc:
+            messagebox.showerror("Profilfehler", f"Profil konnte nicht berechnet werden:\n{exc}")
+            return
+
+        try:
+            from matplotlib.figure import Figure
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        except Exception as exc:
+            messagebox.showerror("Matplotlib fehlt", f"Bitte Matplotlib installieren:\n{exc}")
+            return
+
+        stage = z_positions
+        sample = profile.get("z_corrected", stage)
+        intensity = np.clip(profile.get("intensity_scale", np.ones_like(stage)), 0.0, 1.2)
+        sigma_x = profile.get("sigma_x", np.ones_like(stage))
+        sigma_y = profile.get("sigma_y", np.ones_like(stage))
+        ratio = sigma_x / np.maximum(sigma_y, 1e-6)
+
+        top = tk.Toplevel(self.root)
+        top.title("Z-Profil Vorschau")
+        top.geometry("720x560")
+
+        fig = Figure(figsize=(6.5, 5.2), dpi=100)
+        ax1 = fig.add_subplot(211)
+        ax1.plot(stage, intensity, label="Intensität (normiert)", color="#27ae60")
+        ax1.set_ylabel("Intensität")
+        ax1.set_xlabel("Stage z [µm]")
+        ax1.grid(True, alpha=0.2)
+        ax1.legend(loc="upper left")
+
+        ax1_twin = ax1.twinx()
+        ax1_twin.plot(stage, sample, label="Probe z (korr.)", color="#2980b9", linestyle="--")
+        ax1_twin.set_ylabel("Probe z [µm]")
+        ax1_twin.legend(loc="upper right")
+
+        ax2 = fig.add_subplot(212, sharex=ax1)
+        ax2.plot(stage, sigma_x, label="σx [px]", color="#8e44ad")
+        ax2.plot(stage, sigma_y, label="σy [px]", color="#c0392b")
+        ax2.plot(stage, ratio, label="σx/σy", color="#f39c12", linestyle=":")
+        ax2.set_xlabel("Stage z [µm]")
+        ax2.set_ylabel("PSF-Breite / Verhältnis")
+        ax2.grid(True, alpha=0.2)
+        ax2.legend(loc="best")
+
+        canvas = FigureCanvasTkAgg(fig, master=top)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        top.canvas = canvas
+        top.figure = fig
+
+        ttk.Button(top, text="Schließen", command=top.destroy).pack(pady=6)
 
     def _set_status_ui(self, message: str, color: str = None):
         """Status-Update (UI-Thread)."""
@@ -1848,6 +2121,7 @@ class TIFFSimulatorGUI_V4:
                 "read_noise_std": self.read_noise_std.get(),
                 "spot_intensity_sigma": self.spot_intensity_sigma.get(),
                 "frame_jitter_sigma": self.frame_jitter_sigma.get(),
+                "wavelength_nm": self.wavelength_nm.get(),
                 "on_mean_frames": self.on_mean_frames.get(),
                 "off_mean_frames": self.off_mean_frames.get(),
                 "bleach_prob_per_frame": self.bleach_prob.get(),
@@ -1856,6 +2130,9 @@ class TIFFSimulatorGUI_V4:
                 "astig_z0_um": self.astig_z0_um.get(),
                 "astig_coeffs": {"A_x": self.astig_ax.get(), "B_x": 0.0,
                                "A_y": self.astig_ay.get(), "B_y": 0.0},
+                "astig_focus_offset_um": self.astig_focus_offset_um.get(),
+                "spherical_aberration_strength": self.spherical_aberration_strength.get(),
+                "axial_intensity_floor": self.axial_intensity_floor.get(),
                 # Legacy: Einfache Brechungsindex-Korrektur
                 "refractive_index_correction": self.refractive_index_correction.get(),
                 # ERWEITERTE Brechungsindex-Korrektur (NEU!)

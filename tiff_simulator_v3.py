@@ -99,9 +99,12 @@ TDI_PRESET = DetectorPreset(
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
         "astig_z0_um": 0.7,  # Charakteristische Länge für Astigmatismus [µm] - OPTIMIERT: bessere Spreizung
         "astig_coeffs": {"A_x": 1.5, "B_x": 0.0, "A_y": -1.2, "B_y": 0.0},  # OPTIMIERT: stärkerer Astigmatismus
+        "astig_focus_offset_um": 0.25,  # Brennversatz zwischen x- und y-Ebene [µm]
+        "spherical_aberration_strength": 0.35,  # Stärke der sphärischen Aberration
+        "axial_intensity_floor": 0.15,  # Minimaler Intensitätsfaktor entlang z
         "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
         # ERWEITERTE Brechungsindex-Korrektur (NEU!)
-        "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
+        "use_advanced_refractive_correction": True,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
         "n_oil": 1.518,       # Brechungsindex Immersionsöl (z.B. Olympus TIRF-Öl)
         "n_glass": 1.523,     # Brechungsindex Deckglas (High Precision Coverslide)
         "n_polymer": 1.54,    # Brechungsindex Polymer/Medium (1.52-1.54 für PMMA/PS, 1.33 für Wasser, 1.47 für PAAm-Hydrogel)
@@ -139,9 +142,12 @@ TETRASPECS_PRESET = DetectorPreset(
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
         "astig_z0_um": 0.7,  # Charakteristische Länge für Astigmatismus [µm] - OPTIMIERT: bessere Spreizung
         "astig_coeffs": {"A_x": 1.5, "B_x": 0.0, "A_y": -1.2, "B_y": 0.0},  # OPTIMIERT: stärkerer Astigmatismus
+        "astig_focus_offset_um": 0.25,
+        "spherical_aberration_strength": 0.35,
+        "axial_intensity_floor": 0.15,
         "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
         # ERWEITERTE Brechungsindex-Korrektur (NEU!)
-        "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
+        "use_advanced_refractive_correction": True,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
         "n_oil": 1.518,       # Brechungsindex Immersionsöl (z.B. Olympus TIRF-Öl)
         "n_glass": 1.523,     # Brechungsindex Deckglas (High Precision Coverslide)
         "n_polymer": 1.54,    # Brechungsindex Polymer/Medium (1.52-1.54 für PMMA/PS, 1.33 für Wasser, 1.47 für PAAm-Hydrogel)
@@ -266,6 +272,25 @@ def calculate_advanced_refractive_correction(
     z_corrected = z_apparent * f_base * f_na * f_depth
 
     return z_corrected
+
+
+def compute_rayleigh_range_um(
+    sigma_px: float,
+    pixel_size_um: float,
+    wavelength_nm: float
+) -> float:
+    """Berechnet den Rayleigh-Bereich einer Gaußschen PSF."""
+
+    if pixel_size_um <= 0 or wavelength_nm <= 0:
+        return float("inf")
+
+    waist_um = sigma_px * pixel_size_um
+    wavelength_um = wavelength_nm * 1e-3
+
+    if waist_um <= 0 or wavelength_um <= 0:
+        return float("inf")
+
+    return float(np.pi * waist_um ** 2 / wavelength_um)
 
 
 # ============================================================================
@@ -660,36 +685,137 @@ class PSFGeneratorOptimized:
         self.sigma_px = fwhm_px / 2.355
         self._sigma_eps = 1e-6
 
-        # Astigmatismus-Parameter und Brechungsindex-Korrektur
+        # Optische Parameter aus Metadata
         meta = getattr(detector, 'metadata', {}) or {}
-        if astigmatism:
-            self.z0_um = float(meta.get("astig_z0_um", 0.5))
-            coeffs = meta.get("astig_coeffs", {}) or {}
-            self.Ax = float(coeffs.get("A_x", 1.0))
-            self.Bx = float(coeffs.get("B_x", 0.0))
-            self.Ay = float(coeffs.get("A_y", -0.5))
-            self.By = float(coeffs.get("B_y", 0.0))
+        self.wavelength_nm = float(meta.get("wavelength_nm", 580.0))
+        self.pixel_size_um = float(detector.pixel_size_um)
+        self.n_oil = float(meta.get("n_oil", 1.518))
+        self.n_glass = float(meta.get("n_glass", 1.523))
+        self.n_polymer = float(meta.get("n_polymer", 1.47))
+        self.NA = float(meta.get("NA", 1.45))
+        self.d_glass_um = float(meta.get("d_glass_um", 170.0))
+        self.refractive_correction = float(meta.get("refractive_index_correction", 1.0))
 
-            # ERWEITERTE Brechungsindex-Korrektur (NEU!)
-            self.use_advanced_correction = bool(meta.get("use_advanced_refractive_correction", False))
+        coeffs = meta.get("astig_coeffs", {}) or {}
+        self.Ax = float(coeffs.get("A_x", 0.0))
+        self.Bx = float(coeffs.get("B_x", 0.0))
+        self.Ay = float(coeffs.get("A_y", 0.0))
+        self.By = float(coeffs.get("B_y", 0.0))
+        self.z0_um = float(meta.get("astig_z0_um", 0.5))
+        self.astig_focus_offset_um = float(meta.get("astig_focus_offset_um", 0.0))
+        self.spherical_aberration_strength = float(meta.get("spherical_aberration_strength", 0.3))
+        self.axial_intensity_floor = float(meta.get("axial_intensity_floor", 0.1))
+        self.z_amp_um = float(meta.get("z_amp_um", 0.7))
+        self.rayleigh_range_um = compute_rayleigh_range_um(
+            self.sigma_px, self.pixel_size_um, self.wavelength_nm
+        )
+
+        # Brechungsindex-Korrektur Einstellungen
+        self.use_advanced_correction = False
+        if astigmatism:
+            self.use_advanced_correction = bool(
+                meta.get("use_advanced_refractive_correction", False)
+            )
             if self.use_advanced_correction:
-                # Lade alle Parameter für erweiterte Korrektur
-                self.n_oil = float(meta.get("n_oil", 1.518))
-                self.n_glass = float(meta.get("n_glass", 1.523))
-                self.n_polymer = float(meta.get("n_polymer", 1.47))
-                self.NA = float(meta.get("NA", 1.50))
-                self.d_glass_um = float(meta.get("d_glass_um", 170.0))
-                self.refractive_correction = None  # Nicht verwendet bei erweiterter Korrektur
-            else:
-                # Legacy: Einfacher Korrekturfaktor
-                self.refractive_correction = float(meta.get("refractive_index_correction", 1.0))
-                self.use_advanced_correction = False
+                self.refractive_correction = None
         else:
+            # Ohne Astigmatismus keine spezielle Fokusverschiebung
+            self.astig_focus_offset_um = 0.0
+            self.Ax = self.Bx = self.Ay = self.By = 0.0
             self.refractive_correction = 1.0
-            self.use_advanced_correction = False
 
         # Pre-compute grids
         self._coord_grids = {}
+
+    def compute_axial_profile(self, z_positions: np.ndarray) -> Dict[str, np.ndarray]:
+        """Berechnet σx/σy und Intensitätsskalen für gegebene z-Positionen."""
+
+        z_positions = np.asarray(z_positions, dtype=np.float32)
+        if z_positions.ndim == 0:
+            z_positions = z_positions.reshape(1)
+
+        if z_positions.size == 0:
+            empty = np.array([], dtype=np.float32)
+            return {
+                "z_apparent": empty,
+                "z_corrected": empty,
+                "sigma_x": empty,
+                "sigma_y": empty,
+                "intensity_scale": empty
+            }
+
+        if self.use_advanced_correction:
+            z_corrected = calculate_advanced_refractive_correction(
+                z_positions,
+                n_oil=self.n_oil,
+                n_glass=self.n_glass,
+                n_polymer=self.n_polymer,
+                NA=self.NA,
+                d_glass_um=self.d_glass_um
+            )
+        else:
+            z_corrected = z_positions * float(self.refractive_correction)
+
+        rayleigh = max(self.rayleigh_range_um, 1e-6)
+        if self.astigmatism:
+            z_for_x = z_corrected - self.astig_focus_offset_um
+            z_for_y = z_corrected + self.astig_focus_offset_um
+        else:
+            z_for_x = z_corrected
+            z_for_y = z_corrected
+
+        defocus_x = np.sqrt(1.0 + (z_for_x / rayleigh) ** 2)
+        defocus_y = np.sqrt(1.0 + (z_for_y / rayleigh) ** 2)
+
+        if self.astigmatism:
+            z_norm_x = z_for_x / max(self.z0_um, self._sigma_eps)
+            z_norm_y = z_for_y / max(self.z0_um, self._sigma_eps)
+            term_x = 1.0 + self.Ax * (z_norm_x ** 2) + self.Bx * (z_norm_x ** 4)
+            term_y = 1.0 + self.Ay * (z_norm_y ** 2) + self.By * (z_norm_y ** 4)
+            term_x = np.maximum(term_x, self._sigma_eps)
+            term_y = np.maximum(term_y, self._sigma_eps)
+        else:
+            term_x = np.ones_like(z_corrected, dtype=np.float32)
+            term_y = np.ones_like(z_corrected, dtype=np.float32)
+
+        sigma_x = self.sigma_px * defocus_x * np.sqrt(term_x)
+        sigma_y = self.sigma_px * defocus_y * np.sqrt(term_y)
+
+        intensity_scale = self._axial_intensity_scaling(z_corrected)
+
+        return {
+            "z_apparent": z_positions.astype(np.float32),
+            "z_corrected": z_corrected.astype(np.float32),
+            "sigma_x": sigma_x.astype(np.float32),
+            "sigma_y": sigma_y.astype(np.float32),
+            "intensity_scale": intensity_scale.astype(np.float32)
+        }
+
+    def _axial_intensity_scaling(self, z_corrected: np.ndarray) -> np.ndarray:
+        """Berechnet Intensitätsskala basierend auf Defokus und Aberration."""
+
+        if not np.isfinite(self.rayleigh_range_um):
+            return np.ones_like(z_corrected, dtype=np.float32)
+
+        rayleigh = max(self.rayleigh_range_um, 1e-6)
+        defocus = z_corrected / rayleigh
+        base = 1.0 / (1.0 + defocus ** 2)
+
+        mismatch = abs(self.n_polymer - self.n_oil)
+        aberr_strength = max(self.spherical_aberration_strength, 0.0)
+        if aberr_strength > 0 and np.isfinite(self.d_glass_um) and self.d_glass_um > 0:
+            depth_norm = np.abs(z_corrected) / max(self.d_glass_um, 1.0)
+            aberr = np.exp(-aberr_strength * mismatch * depth_norm ** 1.2)
+        else:
+            aberr = 1.0
+
+        scale = base * aberr
+        if self.z_amp_um > 0:
+            scale *= np.exp(- (z_corrected / self.z_amp_um) ** 2)
+        if self.axial_intensity_floor > 0:
+            scale = np.clip(scale, self.axial_intensity_floor, 1.0)
+
+        return scale.astype(np.float32)
 
     def _get_coordinate_grids(self, image_size: Tuple[int, int]):
         """Pre-computed coordinate grids."""
@@ -701,7 +827,9 @@ class PSFGeneratorOptimized:
         return self._coord_grids[image_size]
 
     def generate_psf_batch(self, positions: np.ndarray, intensities: np.ndarray,
-                          z_positions: np.ndarray, image_size: Tuple[int, int]) -> np.ndarray:
+                          z_positions: np.ndarray, image_size: Tuple[int, int],
+                          sigma_x: Optional[np.ndarray] = None,
+                          sigma_y: Optional[np.ndarray] = None) -> np.ndarray:
         """
         OPTIMIERT: Generiert mehrere PSFs gleichzeitig (vektorisiert).
 
@@ -723,37 +851,21 @@ class PSFGeneratorOptimized:
         np.ndarray : Summierte PSFs [counts], shape (height, width)
         """
 
+        positions = np.asarray(positions, dtype=np.float32)
+        intensities = np.asarray(intensities, dtype=np.float32)
+        z_positions = np.asarray(z_positions, dtype=np.float32)
+
         x_grid, y_grid = self._get_coordinate_grids(image_size)
         height, width = image_size
         n_spots = len(positions)
 
-        # Berechne alle sigmas auf einmal
-        if self.astigmatism:
-            # Brechungsindex-Korrektur auf z-Positionen anwenden
-            if self.use_advanced_correction:
-                # ERWEITERTE PHYSIKALISCHE KORREKTUR (NEU!)
-                z_corrected = calculate_advanced_refractive_correction(
-                    z_positions,
-                    n_oil=self.n_oil,
-                    n_glass=self.n_glass,
-                    n_polymer=self.n_polymer,
-                    NA=self.NA,
-                    d_glass_um=self.d_glass_um
-                )
-            else:
-                # Legacy: Einfache Korrektur
-                z_corrected = z_positions * self.refractive_correction
-
-            z_norm = z_corrected / self.z0_um
-            term_x = 1.0 + self.Ax * (z_norm**2) + self.Bx * (z_norm**4)
-            term_y = 1.0 + self.Ay * (z_norm**2) + self.By * (z_norm**4)
-            term_x = np.maximum(term_x, self._sigma_eps)
-            term_y = np.maximum(term_y, self._sigma_eps)
-            sigma_x = self.sigma_px * np.sqrt(term_x)
-            sigma_y = self.sigma_px * np.sqrt(term_y)
+        if sigma_x is None or sigma_y is None:
+            profile = self.compute_axial_profile(z_positions)
+            sigma_x = profile["sigma_x"]
+            sigma_y = profile["sigma_y"]
         else:
-            sigma_x = np.full(n_spots, self.sigma_px, dtype=np.float32)
-            sigma_y = np.full(n_spots, self.sigma_px, dtype=np.float32)
+            sigma_x = np.asarray(sigma_x, dtype=np.float32)
+            sigma_y = np.asarray(sigma_y, dtype=np.float32)
 
         # Initialisiere Frame
         frame = np.zeros((height, width), dtype=np.float32)
@@ -798,6 +910,13 @@ class PSFGeneratorOptimized:
             "pixel_size_um": self.detector.pixel_size_um,
             "astigmatism": self.astigmatism,
             "z0_um": self.z0_um if self.astigmatism else None,
+            "astig_focus_offset_um": self.astig_focus_offset_um if self.astigmatism else 0.0,
+            "wavelength_nm": self.wavelength_nm,
+            "rayleigh_range_um": self.rayleigh_range_um,
+            "use_advanced_refractive_correction": bool(self.use_advanced_correction),
+            "spherical_aberration_strength": self.spherical_aberration_strength,
+            "axial_intensity_floor": self.axial_intensity_floor,
+            "z_amp_um": self.z_amp_um,
             "optimized": True
         }
 
@@ -1300,7 +1419,6 @@ class TIFFSimulatorOptimized:
         on_mean = float(meta.get("on_mean_frames", 4.0))
         off_mean = float(meta.get("off_mean_frames", 6.0))
         bleach_p = float(meta.get("bleach_prob_per_frame", 0.002))
-        z_amp_um = float(meta.get("z_amp_um", 0.7))
         z_max_um = float(meta.get("z_max_um", 0.6))
 
         # Photophysik
@@ -1351,8 +1469,7 @@ class TIFFSimulatorOptimized:
                 if 0 <= x_px < width and 0 <= y_px < height:
                     # Frame jitter & z-intensity falloff
                     frame_jitter = float(np.exp(np.random.normal(0.0, frame_sigma)))
-                    amp = np.exp(- (z_um / z_amp_um) ** 2) if self.astigmatism else 1.0
-                    intensity = base_intensities[si] * frame_jitter * amp
+                    intensity = base_intensities[si] * frame_jitter
 
                     # Motion Blur: Substeps
                     substeps = max(int(exposure_substeps), 1)
@@ -1381,8 +1498,17 @@ class TIFFSimulatorOptimized:
                 intensities_arr = np.array(spot_intensities, dtype=np.float32)
                 z_positions_arr = np.array(spot_z_positions, dtype=np.float32)
 
+                profile = self.psf_gen.compute_axial_profile(z_positions_arr)
+                if profile["intensity_scale"].size > 0:
+                    intensities_arr *= profile["intensity_scale"]
+
                 psf_batch = self.psf_gen.generate_psf_batch(
-                    positions_arr, intensities_arr, z_positions_arr, image_size
+                    positions_arr,
+                    intensities_arr,
+                    z_positions_arr,
+                    image_size,
+                    sigma_x=profile.get("sigma_x"),
+                    sigma_y=profile.get("sigma_y")
                 )
                 frame += psf_batch
 
@@ -1468,7 +1594,18 @@ class TIFFSimulatorOptimized:
         """
 
         z_min, z_max = z_range_um
-        z_positions = np.arange(z_min, z_max + z_step_um, z_step_um)
+
+        if z_step_um <= 0:
+            raise ValueError("z_step_um muss > 0 sein")
+        if z_max <= z_min:
+            raise ValueError("z_max muss größer als z_min sein")
+
+        z_positions = np.arange(
+            z_min,
+            z_max + 0.5 * z_step_um,
+            z_step_um,
+            dtype=np.float32
+        )
         n_slices = len(z_positions)
 
         height, width = image_size
@@ -1486,8 +1623,14 @@ class TIFFSimulatorOptimized:
         z_stack = np.zeros((n_slices, height, width), dtype=np.uint16)
 
         meta = self.detector.metadata or {}
-        z_amp_um = float(meta.get("z_amp_um", 0.7))
         read_noise_std = float(meta.get("read_noise_std", 1.5))
+
+        stage_positions = []
+        sample_positions = []
+        sigma_x_profile = []
+        sigma_y_profile = []
+        intensity_profile = []
+        aspect_ratio_profile = []
 
         for z_idx, z_um in enumerate(z_positions):
             if progress_callback:
@@ -1496,14 +1639,21 @@ class TIFFSimulatorOptimized:
             # Background
             frame = self.bg_gen.generate(image_size, use_cache=True)
 
-            # z-abhängige Intensität
-            amp = np.exp(- (z_um / z_amp_um) ** 2)
-            spot_intensities = np.full(num_spots, self.detector.max_intensity * amp, dtype=np.float32)
+            # PSF-Parameter & Intensitäten
             z_array = np.full(num_spots, z_um, dtype=np.float32)
+            profile = self.psf_gen.compute_axial_profile(z_array)
+            intensities = np.full(num_spots, self.detector.max_intensity, dtype=np.float32)
+            if profile["intensity_scale"].size > 0:
+                intensities *= profile["intensity_scale"]
 
             # BATCH-PSF
             psf_batch = self.psf_gen.generate_psf_batch(
-                spot_positions_px, spot_intensities, z_array, image_size
+                spot_positions_px,
+                intensities,
+                z_array,
+                image_size,
+                sigma_x=profile.get("sigma_x"),
+                sigma_y=profile.get("sigma_y")
             )
             frame += psf_batch
 
@@ -1517,6 +1667,27 @@ class TIFFSimulatorOptimized:
 
             z_stack[z_idx] = np.clip(frame, 0, 65535).astype(np.uint16)
 
+            stage_positions.append(float(z_um))
+            if profile["z_corrected"].size > 0:
+                sample_z = float(profile["z_corrected"][0])
+                intensity_scale = float(profile["intensity_scale"][0])
+                sigma_x_val = float(profile["sigma_x"][0])
+                sigma_y_val = float(profile["sigma_y"][0])
+            else:
+                sample_z = float(z_um)
+                intensity_scale = 1.0
+                sigma_x_val = float(self.psf_gen.sigma_px)
+                sigma_y_val = float(self.psf_gen.sigma_px)
+
+            sample_positions.append(sample_z)
+            intensity_profile.append(intensity_scale)
+            sigma_x_profile.append(sigma_x_val)
+            sigma_y_profile.append(sigma_y_val)
+            if sigma_y_val > 0:
+                aspect_ratio_profile.append(sigma_x_val / sigma_y_val)
+            else:
+                aspect_ratio_profile.append(1.0)
+
         if progress_callback:
             progress_callback(n_slices, n_slices, "z-Stack fertig!")
 
@@ -1527,7 +1698,19 @@ class TIFFSimulatorOptimized:
             "z_range_um": z_range_um,
             "z_step_um": z_step_um,
             "n_slices": n_slices,
-            "spot_positions": spot_positions_px.tolist()
+            "spot_positions": spot_positions_px.tolist(),
+            "z_stage_positions_um": stage_positions,
+            "z_sample_positions_um": sample_positions,
+            "z_intensity_profile": intensity_profile,
+            "z_sigma_x_px": sigma_x_profile,
+            "z_sigma_y_px": sigma_y_profile,
+            "z_sigma_ratio": aspect_ratio_profile,
+            "rayleigh_range_um": float(self.psf_gen.rayleigh_range_um),
+            "axial_intensity_floor": float(self.psf_gen.axial_intensity_floor),
+            "use_advanced_refractive_correction": bool(self.psf_gen.use_advanced_correction),
+            "refractive_index_correction_factor": float(
+                self.psf_gen.refractive_correction if self.psf_gen.refractive_correction is not None else 1.0
+            )
         })
 
         return z_stack
@@ -1535,6 +1718,27 @@ class TIFFSimulatorOptimized:
     def get_metadata(self) -> Dict:
         """Gibt alle Metadata zurück"""
         return self.metadata.copy()
+
+
+# ============================================================================
+# HILFSFUNKTIONEN FÜR Z-PROFILE
+# ============================================================================
+
+def evaluate_z_profile(detector: DetectorPreset, z_positions: np.ndarray,
+                       astigmatism: bool = True) -> Dict[str, np.ndarray]:
+    """Berechnet PSF-Parameter für gegebene z-Positionen ohne TIFF-Rendering."""
+
+    generator = PSFGeneratorOptimized(detector, astigmatism=astigmatism)
+    profile = generator.compute_axial_profile(np.asarray(z_positions, dtype=np.float32))
+    profile.update({
+        "rayleigh_range_um": generator.rayleigh_range_um,
+        "axial_intensity_floor": generator.axial_intensity_floor,
+        "use_advanced_refractive_correction": bool(generator.use_advanced_correction),
+        "refractive_index_correction_factor": float(
+            generator.refractive_correction if generator.refractive_correction is not None else 1.0
+        )
+    })
+    return profile
 
 
 # ============================================================================

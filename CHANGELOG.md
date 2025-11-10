@@ -16,6 +16,16 @@
 
 - README & BATCH_MODE_GUIDE beschreiben die neue RF-Pipeline (CLI, Python, GUI) samt Output-Artefakten und Best Practices.
 
+### 🔭 Z-Stack Physik & GUI
+
+- Z-Stacks nutzen jetzt eine Rayleigh-basierte PSF-Expansion inklusive astigmatischem Fokusversatz und sphärischer Aberrations-
+  Abschätzung. Die Intensität fällt über Defokus und einen justierbaren Intensitätsboden realistisch ab.
+- Die erweiterte Brechungsindex-Korrektur (Öl/Glas/Probe/NA) ist standardmäßig aktiv; `evaluate_z_profile()` liefert die
+  berechneten σx/σy- und Intensitätsprofile ohne TIFF-Rendering.
+- GUI-Tab „📐 3D & Astigmatismus“ zeigt ein dynamisches Physik-Dashboard mit Stage-/Sample-z-Bereich, Intensitätsskala und
+  σx/σy-Verhältnis sowie Buttons für einen ThunderSTORM-Optimierungspreset und eine interaktive Matplotlib-Vorschau des
+  axialen Profils.
+
 ## Version 4.0 - Oktober 2025 (MAJOR UPDATE)
 
 ### 🚀 Performance-Optimierungen (10-50x schneller!)

@@ -406,6 +406,18 @@ z_stack = sim.generate_z_stack(
 save_tiff("z_calibration.tif", z_stack)
 ```
 
+**Neu ab V4.1:**
+
+- Axiale Profile nutzen jetzt einen physikalisch motivierten Rayleigh-Bereich, eine astigmatismusspezifische Fokusverschiebung
+  sowie eine sphärische Aberrationskorrektur basierend auf den Brechungsindizes (Öl/Glas/Probe).
+- Die Intensität fällt realistisch gemäß Defokus **und** benutzerdefiniertem Intensitätsboden ab – ideal für ThunderSTORM-
+  Kalibrierungen.
+- Mit `evaluate_z_profile(detector, z_positions)` lässt sich das berechnete Profil (σx/σy, Intensität, korrigierte z-Positionen)
+  ohne TIFF-Rendering inspizieren.
+- In der GUI gibt es im Tab „📐 3D & Astigmatismus“ ein neues Info-Panel mit Stage- und Sample-z-Bereichen, Intensitätsskalierung
+  sowie dem Verhältnis σx/σy. Der Button „⚙️ ThunderSTORM Preset“ setzt empfohlene Werte (±0.6 µm, 20 nm Schrittweite,
+  astigmatische Fokusverschiebung 0.28 µm) für typische Kalibrierungsscans.
+
 ### Workflow 4: 3D-Simulation mit Astigmatismus
 
 ```python
