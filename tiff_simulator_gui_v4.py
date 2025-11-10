@@ -212,11 +212,11 @@ class TIFFSimulatorGUI_V4:
         self.max_intensity = tk.DoubleVar(value=260.0)
 
         # ===== ASTIGMATISM & 3D (NEU!) =====
-        self.z_amp_um = tk.DoubleVar(value=0.7)
+        self.z_amp_um = tk.DoubleVar(value=1.2)       # OPTIMIERT: Größer für weiteren z-Range
         self.z_max_um = tk.DoubleVar(value=0.6)
-        self.astig_z0_um = tk.DoubleVar(value=0.5)
-        self.astig_ax = tk.DoubleVar(value=1.0)
-        self.astig_ay = tk.DoubleVar(value=-0.5)
+        self.astig_z0_um = tk.DoubleVar(value=0.7)    # OPTIMIERT: Bessere Spreizung der Astigmatismus-Kurve
+        self.astig_ax = tk.DoubleVar(value=1.5)       # OPTIMIERT: Stärkerer Astigmatismus für bessere Sichtbarkeit
+        self.astig_ay = tk.DoubleVar(value=-1.2)      # OPTIMIERT: Stärkerer Astigmatismus für bessere Sichtbarkeit
         self.refractive_index_correction = tk.DoubleVar(value=1.0)  # Legacy: Einfacher Faktor
 
         # ===== ERWEITERTE BRECHUNGSINDEX-KORREKTUR (NEU!) =====
@@ -234,10 +234,10 @@ class TIFFSimulatorGUI_V4:
         # ===== COMONOMER-BESCHLEUNIGUNGSFAKTOR (NEU!) =====
         self.polymerization_acceleration_factor = tk.DoubleVar(value=1.0)  # NEU
 
-        # ===== Z-STACK =====
-        self.z_min = tk.DoubleVar(value=-1.0)
-        self.z_max = tk.DoubleVar(value=1.0)
-        self.z_step = tk.DoubleVar(value=0.1)
+        # ===== Z-STACK (OPTIMIERT FÜR KALIBRIERUNG) =====
+        self.z_min = tk.DoubleVar(value=-2.0)   # OPTIMIERT: Größerer Range für bessere Kalibrierung
+        self.z_max = tk.DoubleVar(value=2.0)    # OPTIMIERT: Größerer Range für bessere Kalibrierung
+        self.z_step = tk.DoubleVar(value=0.05)  # OPTIMIERT: Feinere Steps für mehr Datenpunkte
 
         # ===== BATCH (KOMPLETT NEU!) =====
         self.batch_mode_enabled = tk.BooleanVar(value=False)  # Single vs Batch
