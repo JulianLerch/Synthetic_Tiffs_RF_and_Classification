@@ -234,10 +234,10 @@ class TIFFSimulatorGUI_V4:
         # ===== COMONOMER-BESCHLEUNIGUNGSFAKTOR (NEU!) =====
         self.polymerization_acceleration_factor = tk.DoubleVar(value=1.0)  # NEU
 
-        # ===== Z-STACK (OPTIMIERT FÜR KALIBRIERUNG) =====
-        self.z_min = tk.DoubleVar(value=-2.0)   # OPTIMIERT: Größerer Range für bessere Kalibrierung
-        self.z_max = tk.DoubleVar(value=2.0)    # OPTIMIERT: Größerer Range für bessere Kalibrierung
-        self.z_step = tk.DoubleVar(value=0.05)  # OPTIMIERT: Feinere Steps für mehr Datenpunkte
+        # ===== Z-STACK (REALISTISCH FÜR TETRASPECS MESSUNG) =====
+        self.z_min = tk.DoubleVar(value=-0.5)   # Realistisch: von -0.5 µm
+        self.z_max = tk.DoubleVar(value=0.5)    # bis +0.5 µm (1 µm total range)
+        self.z_step = tk.DoubleVar(value=0.01)  # Sehr feine Steps: 0.01 µm (101 slices)
 
         # ===== BATCH (KOMPLETT NEU!) =====
         self.batch_mode_enabled = tk.BooleanVar(value=False)  # Single vs Batch
