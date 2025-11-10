@@ -189,8 +189,8 @@ class TIFFSimulatorGUI_V4:
         self.use_advanced_refractive_correction = tk.BooleanVar(value=False)  # Aktiviert erweiterte Korrektur
         self.n_oil = tk.DoubleVar(value=1.518)        # Brechungsindex Immersionsöl
         self.n_glass = tk.DoubleVar(value=1.523)      # Brechungsindex Deckglas
-        self.n_polymer = tk.DoubleVar(value=1.47)     # Brechungsindex Polymer/Medium
-        self.NA = tk.DoubleVar(value=1.50)            # Numerische Apertur
+        self.n_polymer = tk.DoubleVar(value=1.54)     # Brechungsindex Polymer/Medium (KORRIGIERT: war 1.47)
+        self.NA = tk.DoubleVar(value=1.45)            # Numerische Apertur (KORRIGIERT: war 1.50)
         self.d_glass_um = tk.DoubleVar(value=170.0)   # Deckglas-Dicke [µm]
 
         # ===== ILLUMINATION GRADIENT (NEU!) =====

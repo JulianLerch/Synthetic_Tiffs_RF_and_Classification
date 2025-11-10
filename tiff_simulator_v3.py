@@ -104,8 +104,8 @@ TDI_PRESET = DetectorPreset(
         "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
         "n_oil": 1.518,       # Brechungsindex Immersionsöl (z.B. Olympus TIRF-Öl)
         "n_glass": 1.523,     # Brechungsindex Deckglas (High Precision Coverslide)
-        "n_polymer": 1.47,    # Brechungsindex Polymer/Medium (z.B. 1.49 für PMMA, 1.33 für Wasser)
-        "NA": 1.50,           # Numerische Apertur des Objektivs (z.B. 1.50 für TIRF-Objektiv)
+        "n_polymer": 1.54,    # Brechungsindex Polymer/Medium (1.52-1.54 für PMMA/PS, 1.33 für Wasser, 1.47 für PAAm-Hydrogel)
+        "NA": 1.45,           # Numerische Apertur des Objektivs (z.B. 1.45-1.49 für TIRF-Objektiv, muss < n_polymer sein!)
         "d_glass_um": 170.0,  # Deckglas-Dicke [µm] (typisch: 170 µm für #1.5 High Precision Slides)
         # Ausleuchtungsgradient (hyperrealistisch)
         "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
@@ -144,8 +144,8 @@ TETRASPECS_PRESET = DetectorPreset(
         "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
         "n_oil": 1.518,       # Brechungsindex Immersionsöl (z.B. Olympus TIRF-Öl)
         "n_glass": 1.523,     # Brechungsindex Deckglas (High Precision Coverslide)
-        "n_polymer": 1.47,    # Brechungsindex Polymer/Medium (z.B. 1.49 für PMMA, 1.33 für Wasser)
-        "NA": 1.50,           # Numerische Apertur des Objektivs (z.B. 1.50 für TIRF-Objektiv)
+        "n_polymer": 1.54,    # Brechungsindex Polymer/Medium (1.52-1.54 für PMMA/PS, 1.33 für Wasser, 1.47 für PAAm-Hydrogel)
+        "NA": 1.45,           # Numerische Apertur des Objektivs (z.B. 1.45-1.49 für TIRF-Objektiv, muss < n_polymer sein!)
         "d_glass_um": 170.0,  # Deckglas-Dicke [µm] (typisch: 170 µm für #1.5 High Precision Slides)
         # Ausleuchtungsgradient (hyperrealistisch)
         "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
@@ -189,6 +189,7 @@ def calculate_advanced_refractive_correction(
     3. TIEFENABHÄNGIGER TERM: 1 + (d_glass / z) * (1 - n_glass / n_polymer)
        - Deckglas-Dicke induziert zusätzliche Aberration
        - Effekt nimmt mit Fokustiefe ab
+       - WICHTIG: Nur für z > 0.1 µm angewendet (sonst numerische Instabilität)
 
     Gesamtformel:
     -------------
@@ -197,7 +198,8 @@ def calculate_advanced_refractive_correction(
     wobei:
     - f_base = n_polymer / n_oil
     - f_na = sqrt(n_oil² - NA²) / sqrt(n_polymer² - NA²)
-    - f_depth = 1 + (d_glass / z_apparent) * (1 - n_glass / n_polymer)
+    - f_depth = 1 + (d_glass / z_apparent) * (1 - n_glass / n_polymer)  für z > 0.1 µm
+                1.0                                                      für z ≤ 0.1 µm
 
     Parameters:
     -----------
@@ -249,7 +251,16 @@ def calculate_advanced_refractive_correction(
         f_na = np.sqrt(n_oil**2 - NA**2) / np.sqrt(n_polymer**2 - NA**2)
 
     # 3. TIEFENABHÄNGIGER TERM (Deckglas-Aberration)
-    f_depth = 1.0 + (d_glass_um / z_safe) * (1.0 - n_glass / n_polymer)
+    # WICHTIG: Dieser Term ist nur für positive z > z_threshold physikalisch gültig!
+    # Für z ≈ 0 oder negativ würde f_depth explodieren oder negativ werden.
+    z_threshold_um = 0.1  # Minimale z-Position für Tiefenkorrektur [µm]
+
+    # Berechne f_depth nur für z > z_threshold, sonst f_depth = 1.0
+    f_depth = np.where(
+        z_apparent > z_threshold_um,
+        1.0 + (d_glass_um / np.maximum(z_apparent, z_threshold_um)) * (1.0 - n_glass / n_polymer),
+        1.0  # Keine Tiefenkorrektur für z ≤ z_threshold
+    )
 
     # Gesamtkorrektur
     z_corrected = z_apparent * f_base * f_na * f_depth
