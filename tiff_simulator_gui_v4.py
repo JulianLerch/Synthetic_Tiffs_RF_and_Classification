@@ -212,11 +212,11 @@ class TIFFSimulatorGUI_V4:
         self.max_intensity = tk.DoubleVar(value=260.0)
 
         # ===== ASTIGMATISM & 3D (NEU!) =====
-        self.z_amp_um = tk.DoubleVar(value=0.7)
+        self.z_amp_um = tk.DoubleVar(value=1.2)       # OPTIMIERT: Größer für weiteren z-Range
         self.z_max_um = tk.DoubleVar(value=0.6)
-        self.astig_z0_um = tk.DoubleVar(value=0.5)
-        self.astig_ax = tk.DoubleVar(value=1.0)
-        self.astig_ay = tk.DoubleVar(value=-0.5)
+        self.astig_z0_um = tk.DoubleVar(value=0.7)    # OPTIMIERT: Bessere Spreizung der Astigmatismus-Kurve
+        self.astig_ax = tk.DoubleVar(value=1.5)       # OPTIMIERT: Stärkerer Astigmatismus für bessere Sichtbarkeit
+        self.astig_ay = tk.DoubleVar(value=-1.2)      # OPTIMIERT: Stärkerer Astigmatismus für bessere Sichtbarkeit
         self.refractive_index_correction = tk.DoubleVar(value=1.0)  # Legacy: Einfacher Faktor
 
         # ===== ERWEITERTE BRECHUNGSINDEX-KORREKTUR (NEU!) =====
@@ -234,10 +234,10 @@ class TIFFSimulatorGUI_V4:
         # ===== COMONOMER-BESCHLEUNIGUNGSFAKTOR (NEU!) =====
         self.polymerization_acceleration_factor = tk.DoubleVar(value=1.0)  # NEU
 
-        # ===== Z-STACK =====
-        self.z_min = tk.DoubleVar(value=-1.0)
-        self.z_max = tk.DoubleVar(value=1.0)
-        self.z_step = tk.DoubleVar(value=0.1)
+        # ===== Z-STACK (OPTIMIERT FÜR KALIBRIERUNG) =====
+        self.z_min = tk.DoubleVar(value=-2.0)   # OPTIMIERT: Größerer Range für bessere Kalibrierung
+        self.z_max = tk.DoubleVar(value=2.0)    # OPTIMIERT: Größerer Range für bessere Kalibrierung
+        self.z_step = tk.DoubleVar(value=0.05)  # OPTIMIERT: Feinere Steps für mehr Datenpunkte
 
         # ===== BATCH (KOMPLETT NEU!) =====
         self.batch_mode_enabled = tk.BooleanVar(value=False)  # Single vs Batch
@@ -263,17 +263,9 @@ class TIFFSimulatorGUI_V4:
         self.batch_detector = tk.StringVar(value="TDI-G0")
         self.batch_custom_times = tk.StringVar(value="")
 
-        # ===== RANDOM-FOREST TRAINING =====
-        self.batch_train_rf = tk.BooleanVar(value=False)
-        self.batch_rf_window = tk.IntVar(value=48)
-        self.batch_rf_step = tk.IntVar(value=16)
-        self.batch_rf_estimators = tk.IntVar(value=1024)
-        self.batch_rf_max_depth = tk.IntVar(value=28)
-        self.batch_rf_min_leaf = tk.IntVar(value=3)
-        self.batch_rf_min_split = tk.IntVar(value=6)
-        self.batch_rf_max_samples = tk.DoubleVar(value=0.85)
-        self.batch_rf_max_windows_per_class = tk.IntVar(value=100_000)
-        self.batch_rf_max_windows_per_track = tk.IntVar(value=600)
+        # ===== RF-TRAINING VARIABLEN ENTFERNT =====
+        # RF-Training ist jetzt nur noch im dedizierten "RF Training" Tab!
+        # Batch-Modus fokussiert sich auf TIFF-Generierung.
 
         # ===== DEDIZIERTES RF-TRAINING (NEU!) =====
         self.rf_dedicated_output_dir = tk.StringVar(value=str(Path.home() / "Desktop" / "rf_training"))
@@ -1230,114 +1222,10 @@ class TIFFSimulatorGUI_V4:
         ).pack(anchor=tk.W)
 
         # ====================================================================
-        # RANDOM-FOREST TRAINING
+        # RF-TRAINING FRAME ENTFERNT
         # ====================================================================
-        rf_frame = ttk.LabelFrame(self.batch_tab, text="🌲 Random-Forest KI-Training", padding=10)
-        rf_frame.pack(fill=tk.X, padx=10, pady=5)
-
-        ttk.Checkbutton(
-            rf_frame,
-            text="🌲 Parallel ein Premium-Random-Forest trainieren",
-            variable=self.batch_train_rf,
-            command=self._toggle_rf_options
-        ).pack(anchor=tk.W, pady=2)
-
-        self.rf_option_widgets = []
-
-        rf_row1 = tk.Frame(rf_frame)
-        rf_row1.pack(fill=tk.X, pady=2)
-        tk.Label(rf_row1, text="Fenstergröße (Frames):", width=25, anchor=tk.W).pack(side=tk.LEFT)
-        spin_window = ttk.Spinbox(rf_row1, from_=10, to=600, increment=2,
-                                  textvariable=self.batch_rf_window, width=8)
-        spin_window.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_window)
-
-        tk.Label(rf_row1, text="Schrittweite:", width=15, anchor=tk.W).pack(side=tk.LEFT)
-        spin_step = ttk.Spinbox(rf_row1, from_=1, to=300, increment=1,
-                                textvariable=self.batch_rf_step, width=8)
-        spin_step.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_step)
-
-        rf_row2 = tk.Frame(rf_frame)
-        rf_row2.pack(fill=tk.X, pady=2)
-        tk.Label(rf_row2, text="Bäume (n_estimators):", width=25, anchor=tk.W).pack(side=tk.LEFT)
-        spin_estimators = ttk.Spinbox(rf_row2, from_=256, to=4096, increment=64,
-                                      textvariable=self.batch_rf_estimators, width=8)
-        spin_estimators.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_estimators)
-
-        tk.Label(rf_row2, text="Max. Tiefe (0 = ∞):", width=15, anchor=tk.W).pack(side=tk.LEFT)
-        spin_depth = ttk.Spinbox(rf_row2, from_=0, to=80, increment=1,
-                                 textvariable=self.batch_rf_max_depth, width=8)
-        spin_depth.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_depth)
-
-        rf_row3 = tk.Frame(rf_frame)
-        rf_row3.pack(fill=tk.X, pady=2)
-        tk.Label(rf_row3, text="Min. Samples/Leaf:", width=25, anchor=tk.W).pack(side=tk.LEFT)
-        spin_leaf = ttk.Spinbox(rf_row3, from_=1, to=20, increment=1,
-                                textvariable=self.batch_rf_min_leaf, width=8)
-        spin_leaf.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_leaf)
-
-        tk.Label(rf_row3, text="Min. Samples/Split:", width=18, anchor=tk.W).pack(side=tk.LEFT)
-        spin_split = ttk.Spinbox(rf_row3, from_=2, to=40, increment=1,
-                                 textvariable=self.batch_rf_min_split, width=8)
-        spin_split.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_split)
-
-        rf_row4 = tk.Frame(rf_frame)
-        rf_row4.pack(fill=tk.X, pady=2)
-        tk.Label(rf_row4, text="Baum-Subsampling (max_samples):", width=25, anchor=tk.W).pack(side=tk.LEFT)
-        spin_max_samples = ttk.Spinbox(
-            rf_row4,
-            from_=0.1,
-            to=1.0,
-            increment=0.05,
-            format="%.2f",
-            textvariable=self.batch_rf_max_samples,
-            width=8,
-        )
-        spin_max_samples.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_max_samples)
-
-        tk.Label(rf_row4, text="Fenster/Klasse (0 = ∞):", width=18, anchor=tk.W).pack(side=tk.LEFT)
-        spin_class_cap = ttk.Spinbox(
-            rf_row4,
-            from_=0,
-            to=500000,
-            increment=5000,
-            textvariable=self.batch_rf_max_windows_per_class,
-            width=10,
-        )
-        spin_class_cap.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_class_cap)
-
-        rf_row5 = tk.Frame(rf_frame)
-        rf_row5.pack(fill=tk.X, pady=2)
-        tk.Label(rf_row5, text="Fenster/Track (0 = ∞):", width=25, anchor=tk.W).pack(side=tk.LEFT)
-        spin_track_cap = ttk.Spinbox(
-            rf_row5,
-            from_=0,
-            to=5000,
-            increment=50,
-            textvariable=self.batch_rf_max_windows_per_track,
-            width=8,
-        )
-        spin_track_cap.pack(side=tk.LEFT, padx=5)
-        self.rf_option_widgets.append(spin_track_cap)
-
-        tk.Label(rf_row5, text="Mehrfachläufe nutzen denselben Wald und sammeln neue Fenster.",
-                 anchor=tk.W, justify=tk.LEFT).pack(side=tk.LEFT, padx=5)
-
-        tk.Label(
-            rf_frame,
-            text="💾 Modell & Feature-Tabelle landen automatisch im Batch-Output-Verzeichnis",
-            font=("Arial", 9),
-            fg="#16a085"
-        ).pack(anchor=tk.W, pady=3)
-
-        self._toggle_rf_options()
+        # RF-Training ist jetzt NUR im dedizierten "RF Training" Tab!
+        # Der Batch-Modus fokussiert sich auf effiziente TIFF-Generierung.
 
         # ====================================================================
         # ZUSAMMENFASSUNG
@@ -1387,7 +1275,8 @@ class TIFFSimulatorGUI_V4:
         self._update_batch_summary()
 
     def _toggle_batch_mode(self):
-        """Toggelt zwischen Single und Batch Mode."""
+        """Toggelt zwischen Single und Batch Mode und aktualisiert Control-States."""
+        self._update_control_states()  # Update UI states
         if self.batch_mode_enabled.get():
             self._update_status("📦 Batch-Modus aktiviert", "#3498db")
             self.notebook.select(4)  # Switch to Batch tab
@@ -1451,45 +1340,90 @@ class TIFFSimulatorGUI_V4:
                 text=f"❌ Fehler beim Parsen: {str(e)}\nBitte Eingabe prüfen!"
             )
 
-    def _toggle_rf_options(self):
-        """Aktiviert oder deaktiviert RF-Parameterfelder."""
-        state = tk.NORMAL if self.batch_train_rf.get() else tk.DISABLED
-        for widget in getattr(self, 'rf_option_widgets', []):
+    # ========================================================================
+    # DYNAMIC ENABLE/DISABLE LOGIC (Smart UI)
+    # ========================================================================
+
+    def _update_control_states(self):
+        """
+        Aktualisiert Enable/Disable Status aller Controls basierend auf gewählten Modi.
+        Macht die GUI benutzerfreundlicher durch Ausgrauen irrelevanter Optionen.
+        """
+        sim_mode = self.sim_mode_var.get()
+        batch_enabled = self.batch_mode_enabled.get()
+        photophysics_enabled = self.enable_photophysics.get()
+        advanced_refractive = self.use_advanced_refractive_correction.get()
+
+        # ====================================================================
+        # BASIC TAB: Time-Series vs z-Stack Controls
+        # ====================================================================
+        # z-Stack spezifische Controls
+        z_stack_mode = (sim_mode == "z_stack")
+        # Time-Series spezifische Controls
+        time_series_mode = sim_mode in ("polyzeit", "polyzeit_astig")
+
+        # Store widget references if not already done
+        if not hasattr(self, '_control_widgets_initialized'):
+            self._init_control_widget_references()
+
+        # z-Stack: nur z-Parameter aktiv
+        z_state = tk.NORMAL if z_stack_mode else tk.DISABLED
+        for widget in getattr(self, 'z_stack_widgets', []):
             try:
-                widget.configure(state=state)
+                widget.configure(state=z_state)
             except tk.TclError:
                 pass
 
-    def _get_batch_rf_kwargs(self) -> dict:
-        """Erstellt kwargs für Random-Forest-Training."""
-        if not self.batch_train_rf.get():
-            return {}
+        # Time-Series: nur Time-Series Parameter aktiv
+        ts_state = tk.NORMAL if time_series_mode else tk.DISABLED
+        for widget in getattr(self, 'time_series_widgets', []):
+            try:
+                widget.configure(state=ts_state)
+            except tk.TclError:
+                pass
 
-        max_depth = self.batch_rf_max_depth.get()
-        if max_depth <= 0:
-            max_depth = None
+        # ====================================================================
+        # PHOTOPHYSICS TAB: nur aktiv wenn Checkbox an
+        # ====================================================================
+        photo_state = tk.NORMAL if photophysics_enabled else tk.DISABLED
+        for widget in getattr(self, 'photophysics_widgets', []):
+            try:
+                widget.configure(state=photo_state)
+            except tk.TclError:
+                pass
 
-        max_samples = self.batch_rf_max_samples.get()
-        if max_samples <= 0:
-            max_samples = None
-        else:
-            max_samples = min(1.0, float(max_samples))
+        # ====================================================================
+        # ASTIGMATISM TAB: Advanced Refractive Correction
+        # ====================================================================
+        adv_refr_state = tk.NORMAL if advanced_refractive else tk.DISABLED
+        for widget in getattr(self, 'advanced_refractive_widgets', []):
+            try:
+                widget.configure(state=adv_refr_state)
+            except tk.TclError:
+                pass
 
-        return {
-            'enable_rf': True,
-            'rf_config': {
-                'window_size': max(5, self.batch_rf_window.get()),
-                'step_size': max(1, self.batch_rf_step.get()),
-                'n_estimators': max(100, self.batch_rf_estimators.get()),
-                'max_depth': max_depth,
-                'min_samples_leaf': max(1, self.batch_rf_min_leaf.get()),
-                'min_samples_split': max(2, self.batch_rf_min_split.get()),
-                'random_state': 42,
-                'max_samples': max_samples,
-                'max_windows_per_class': max(0, self.batch_rf_max_windows_per_class.get()),
-                'max_windows_per_track': max(0, self.batch_rf_max_windows_per_track.get()),
-            }
-        }
+        # ====================================================================
+        # BATCH TAB: Batch-spezifische Controls
+        # ====================================================================
+        batch_state = tk.NORMAL if batch_enabled else tk.DISABLED
+        for widget in getattr(self, 'batch_specific_widgets', []):
+            try:
+                widget.configure(state=batch_state)
+            except tk.TclError:
+                pass
+
+    def _init_control_widget_references(self):
+        """
+        Initialisiert Listen von Widgets die zusammen aktiviert/deaktiviert werden.
+        Wird beim ersten Aufruf von _update_control_states() ausgeführt.
+        """
+        # Diese Listen werden später in den Tab-Creation Methoden befüllt
+        self.z_stack_widgets = []
+        self.time_series_widgets = []
+        self.photophysics_widgets = []
+        self.advanced_refractive_widgets = []
+        self.batch_specific_widgets = []
+        self._control_widgets_initialized = True
 
     def _create_export_tab(self):
         """Tab für Export-Optionen."""
@@ -1540,7 +1474,8 @@ class TIFFSimulatorGUI_V4:
             self._update_status("📷 Tetraspecs Preset geladen")
 
     def _update_mode_info(self):
-        """Aktualisiert Mode-Info-Text."""
+        """Aktualisiert Mode-Info-Text und Control-States."""
+        self._update_control_states()  # Update UI states
         mode = self.sim_mode_var.get()
 
         info_texts = {
@@ -1780,17 +1715,14 @@ class TIFFSimulatorGUI_V4:
         self._update_progress(100)
 
     def _run_batch_simulation_integrated(self):
-        """NEUE FUNKTION: Batch-Modus vollständig integriert!"""
+        """Batch-Modus: Generiert mehrere TIFFs mit verschiedenen Parametern."""
         import re
         import numpy as np
 
         self._update_status("📦 Starte Batch-Modus...")
         self._update_progress(5)
 
-        rf_kwargs = self._get_batch_rf_kwargs()
-        rf_enabled = bool(rf_kwargs)
-        rf_trainer = None
-        rf_info = None
+        # RF-Training wurde aus Batch entfernt - verwende den dedizierten RF Tab!
 
         # Parse Polyzeiten
         times_str = self.batch_poly_times.get().strip()
@@ -1818,12 +1750,6 @@ class TIFFSimulatorGUI_V4:
         # Output-Verzeichnis
         base_dir = Path(self.output_dir.get())
         base_dir.mkdir(parents=True, exist_ok=True)
-
-        if rf_enabled:
-            rf_config_dict = rf_kwargs.get('rf_config', {})
-            rf_config = RFTrainingConfig(**rf_config_dict)
-            rf_trainer = RandomForestTrainer(base_dir, rf_config)
-            self._update_status("🌲 RF-Training aktiviert – Features werden gesammelt...", "#16a085")
 
         # Gesamtzahl Tasks
         total_tasks = len(poly_times) * repeats
@@ -1887,12 +1813,9 @@ class TIFFSimulatorGUI_V4:
                 # Speichern
                 save_tiff(str(filepath), tiff_stack)
 
-                # Metadata
-                metadata = None
-                if self.export_json.get() or self.export_txt.get() or self.export_csv.get() or rf_trainer:
+                # Metadata Export
+                if self.export_json.get() or self.export_txt.get() or self.export_csv.get():
                     metadata = sim.get_metadata()
-
-                if metadata is not None and (self.export_json.get() or self.export_txt.get() or self.export_csv.get()):
                     exporter = MetadataExporter(str(output_dir))
                     base_name = filepath.stem
 
@@ -1903,33 +1826,8 @@ class TIFFSimulatorGUI_V4:
                     if self.export_csv.get():
                         exporter.export_csv_row(metadata, base_name)
 
-                if rf_trainer and metadata is not None:
-                    # Aktualisiere Random-Forest mit den frisch simulierten Trajektorien
-                    try:
-                        rf_trainer.update_with_metadata(metadata)
-                    except Exception as rf_err:
-                        print(f"⚠️ RF-Update Warnung: {rf_err}")
-
-        if rf_trainer:
-            rf_info = rf_trainer.finalize()
-
         self._update_progress(100)
         self._update_status(f"✅ Batch fertig! {total_tasks} TIFFs erstellt.")
-
-        if rf_trainer:
-            def _notify_rf_completion():
-                if rf_info and rf_info.get('model_path'):
-                    msg = (
-                        "Random-Forest Training abgeschlossen!\n\n"
-                        f"Fenster: {rf_info.get('samples', 0)}\n"
-                        f"Modell: {rf_info.get('model_path')}"
-                    )
-                    messagebox.showinfo("Random Forest", msg)
-                    self._update_status(f"🌲 RF gespeichert: {rf_info.get('model_path')}", "#16a085")
-                else:
-                    self._update_status("🌲 Keine gültigen Trajektorienfenster für RF gefunden.", "#e67e22")
-
-            self.root.after(0, _notify_rf_completion)
 
     def _create_custom_detector(self):
         """Erstellt Custom-Detektor mit aktuellen GUI-Parametern."""

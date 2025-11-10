@@ -94,11 +94,11 @@ TDI_PRESET = DetectorPreset(
         "on_mean_frames": 4.0,
         "off_mean_frames": 6.0,
         "bleach_prob_per_frame": 0.002,
-        # Z-Stack Kalibrierungs-Parameter
-        "z_amp_um": 0.7,  # Intensitätsabfall-Skala in z [µm] - kleinerer Wert = stärkerer Abfall
-        "z_max_um": 0.6,  # Maximale z-Auslenkung [µm]
-        "astig_z0_um": 0.5,  # Charakteristische Länge für Astigmatismus [µm]
-        "astig_coeffs": {"A_x": 1.0, "B_x": 0.0, "A_y": -0.5, "B_y": 0.0},  # Astigmatismus-Koeffizienten
+        # Z-Stack Kalibrierungs-Parameter (OPTIMIERT für Astigmatismus-Kalibrierung)
+        "z_amp_um": 1.2,  # Intensitätsabfall-Skala in z [µm] - OPTIMIERT: größer für weiteren z-Range
+        "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
+        "astig_z0_um": 0.7,  # Charakteristische Länge für Astigmatismus [µm] - OPTIMIERT: bessere Spreizung
+        "astig_coeffs": {"A_x": 1.5, "B_x": 0.0, "A_y": -1.2, "B_y": 0.0},  # OPTIMIERT: stärkerer Astigmatismus
         "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
         # ERWEITERTE Brechungsindex-Korrektur (NEU!)
         "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
@@ -134,11 +134,11 @@ TETRASPECS_PRESET = DetectorPreset(
         "on_mean_frames": 5.0,
         "off_mean_frames": 7.0,
         "bleach_prob_per_frame": 0.0015,
-        # Z-Stack Kalibrierungs-Parameter
-        "z_amp_um": 0.7,  # Intensitätsabfall-Skala in z [µm] - kleinerer Wert = stärkerer Abfall
-        "z_max_um": 0.6,  # Maximale z-Auslenkung [µm]
-        "astig_z0_um": 0.5,  # Charakteristische Länge für Astigmatismus [µm]
-        "astig_coeffs": {"A_x": 1.0, "B_x": 0.0, "A_y": -0.5, "B_y": 0.0},  # Astigmatismus-Koeffizienten
+        # Z-Stack Kalibrierungs-Parameter (OPTIMIERT für Astigmatismus-Kalibrierung)
+        "z_amp_um": 1.2,  # Intensitätsabfall-Skala in z [µm] - OPTIMIERT: größer für weiteren z-Range
+        "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
+        "astig_z0_um": 0.7,  # Charakteristische Länge für Astigmatismus [µm] - OPTIMIERT: bessere Spreizung
+        "astig_coeffs": {"A_x": 1.5, "B_x": 0.0, "A_y": -1.2, "B_y": 0.0},  # OPTIMIERT: stärkerer Astigmatismus
         "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
         # ERWEITERTE Brechungsindex-Korrektur (NEU!)
         "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
