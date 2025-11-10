@@ -111,6 +111,40 @@ class TIFFSimulatorGUI_V4:
     Version 4.0 mit maximalen Einstellungsmöglichkeiten!
     """
 
+    # ========================================================================
+    # UI LAYOUT CONSTANTS
+    # ========================================================================
+    # Widget Widths
+    WIDGET_WIDTH_SMALL = 10
+    WIDGET_WIDTH_MEDIUM = 15
+    WIDGET_WIDTH_LARGE = 18
+    WIDGET_WIDTH_XLARGE = 25
+    WIDGET_WIDTH_ENTRY = 30
+    WIDGET_WIDTH_LONG_ENTRY = 50
+
+    # Padding
+    PADDING_TINY = 1
+    PADDING_SMALL = 2
+    PADDING_MEDIUM = 5
+    PADDING_LARGE = 10
+    PADDING_XLARGE = 15
+
+    # Fonts
+    FONT_SMALL = ("Arial", 9)
+    FONT_NORMAL = ("Arial", 10)
+    FONT_HEADER = ("Arial", 12, "bold")
+    FONT_LARGE_HEADER = ("Arial", 14, "bold")
+    FONT_TITLE = ("Arial", 16, "bold")
+
+    # Colors
+    COLOR_SUCCESS = "#27ae60"
+    COLOR_INFO = "#16a085"
+    COLOR_WARNING = "#f39c12"
+    COLOR_ERROR = "#e74c3c"
+    COLOR_MUTED = "#7f8c8d"
+    COLOR_PRIMARY = "#3498db"
+    COLOR_BACKGROUND = "#f5f5f5"
+
     def __init__(self, root):
         self.root = root
         self.root.title("🔬 Hyperrealistischer TIFF Simulator V4.0 - ADVANCED")
@@ -181,8 +215,8 @@ class TIFFSimulatorGUI_V4:
         self.z_amp_um = tk.DoubleVar(value=0.7)
         self.z_max_um = tk.DoubleVar(value=0.6)
         self.astig_z0_um = tk.DoubleVar(value=0.5)
-        self.astig_Ax = tk.DoubleVar(value=1.0)
-        self.astig_Ay = tk.DoubleVar(value=-0.5)
+        self.astig_ax = tk.DoubleVar(value=1.0)
+        self.astig_ay = tk.DoubleVar(value=-0.5)
         self.refractive_index_correction = tk.DoubleVar(value=1.0)  # Legacy: Einfacher Faktor
 
         # ===== ERWEITERTE BRECHUNGSINDEX-KORREKTUR (NEU!) =====
@@ -264,6 +298,101 @@ class TIFFSimulatorGUI_V4:
         self.export_txt = tk.BooleanVar(value=True)
         self.export_csv = tk.BooleanVar(value=True)
 
+    # ========================================================================
+    # WIDGET FACTORY HELPERS (Eliminates Code Duplication)
+    # ========================================================================
+
+    def _create_parameter_row(self, parent, label_text, widget_type="spinbox",
+                              variable=None, tooltip=None, **widget_kwargs):
+        """
+        Creates a standardized parameter row: Label + Widget.
+
+        Args:
+            parent: Parent frame
+            label_text: Text for the label
+            widget_type: "spinbox", "entry", "checkbox", "scale"
+            variable: Tkinter variable to bind
+            tooltip: Tooltip text (optional)
+            **widget_kwargs: Additional kwargs for the widget
+
+        Returns:
+            frame, widget: The created frame and widget
+        """
+        frame = tk.Frame(parent)
+        frame.pack(fill=tk.X, pady=self.PADDING_SMALL)
+
+        # Label
+        label = tk.Label(
+            frame,
+            text=label_text,
+            width=self.WIDGET_WIDTH_XLARGE,
+            anchor=tk.W
+        )
+        label.pack(side=tk.LEFT)
+
+        # Widget
+        if widget_type == "spinbox":
+            widget = ttk.Spinbox(
+                frame,
+                textvariable=variable,
+                width=self.WIDGET_WIDTH_MEDIUM,
+                **widget_kwargs
+            )
+        elif widget_type == "entry":
+            widget = tk.Entry(
+                frame,
+                textvariable=variable,
+                width=widget_kwargs.pop("width", self.WIDGET_WIDTH_ENTRY),
+                **widget_kwargs
+            )
+        elif widget_type == "checkbox":
+            widget = ttk.Checkbutton(
+                frame,
+                variable=variable,
+                **widget_kwargs
+            )
+        elif widget_type == "scale":
+            widget = ttk.Scale(
+                frame,
+                variable=variable,
+                **widget_kwargs
+            )
+        else:
+            raise ValueError(f"Unknown widget type: {widget_type}")
+
+        widget.pack(side=tk.LEFT, padx=self.PADDING_MEDIUM)
+
+        # Tooltip
+        if tooltip:
+            ToolTip(frame, tooltip)
+
+        return frame, widget
+
+    def _create_labeled_frame(self, parent, title, **kwargs):
+        """Creates a standardized labeled frame."""
+        frame = ttk.LabelFrame(parent, text=title, padding=self.PADDING_LARGE)
+        frame.pack(fill=tk.X, padx=self.PADDING_MEDIUM, pady=self.PADDING_MEDIUM, **kwargs)
+        return frame
+
+    def _create_section_header(self, parent, text, emoji="", font=None):
+        """Creates a standardized section header label."""
+        if font is None:
+            font = self.FONT_LARGE_HEADER
+
+        full_text = f"{emoji} {text}" if emoji else text
+        label = tk.Label(
+            parent,
+            text=full_text,
+            font=font,
+            fg=self.COLOR_INFO
+        )
+        label.pack(pady=self.PADDING_MEDIUM)
+        return label
+
+    # ========================================================================
+    # MAIN UI CREATION
+    # ========================================================================
+
     def _create_widgets(self):
         """Erstellt alle GUI-Elemente."""
 
@@ -277,26 +406,26 @@ class TIFFSimulatorGUI_V4:
         tk.Label(
             header_frame,
             text="🔬 Hyperrealistischer TIFF Simulator V4.0",
-            font=("Arial", 20, "bold"),
+            font=("Arial", 20, "bold"),  # Custom title font
             bg="#1a1a2e",
             fg="white"
-        ).pack(pady=5)
+        ).pack(pady=self.PADDING_MEDIUM)
 
         tk.Label(
             header_frame,
             text="⚡ ADVANCED EDITION - Optimiert für maximale Performance & Flexibilität",
-            font=("Arial", 11),
+            font=("Arial", 11),  # Custom subtitle font
             bg="#1a1a2e",
-            fg="#16c79a"
+            fg=self.COLOR_INFO
         ).pack()
 
         tk.Label(
             header_frame,
             text="✨ Mit erweiterten Photophysik-Parametern, Live-Preview & Batch-Processing",
-            font=("Arial", 9),
+            font=self.FONT_SMALL,
             bg="#1a1a2e",
             fg="#a8dadc"
-        ).pack(pady=2)
+        ).pack(pady=self.PADDING_SMALL)
 
         # ====================================================================
         # SCROLLBARER HAUPTBEREICH
@@ -809,7 +938,7 @@ class TIFFSimulatorGUI_V4:
         ax_frame.pack(fill=tk.X, pady=2)
         tk.Label(ax_frame, text="A_x (x-Koeffizient):", width=25, anchor=tk.W).pack(side=tk.LEFT)
         ax_spin = ttk.Spinbox(ax_frame, from_=-2.0, to=2.0, increment=0.1,
-                   textvariable=self.astig_Ax, width=10, format='%.2f')
+                   textvariable=self.astig_ax, width=10, format='%.2f')
         ax_spin.pack(side=tk.LEFT, padx=5)
         ToolTip(ax_spin, "Astigmatismus x-Koeffizient\n+1.0 = Standard")
 
@@ -818,7 +947,7 @@ class TIFFSimulatorGUI_V4:
         ay_frame.pack(fill=tk.X, pady=2)
         tk.Label(ay_frame, text="A_y (y-Koeffizient):", width=25, anchor=tk.W).pack(side=tk.LEFT)
         ay_spin = ttk.Spinbox(ay_frame, from_=-2.0, to=2.0, increment=0.1,
-                   textvariable=self.astig_Ay, width=10, format='%.2f')
+                   textvariable=self.astig_ay, width=10, format='%.2f')
         ay_spin.pack(side=tk.LEFT, padx=5)
         ToolTip(ay_spin, "Astigmatismus y-Koeffizient\n-0.5 = Standard")
 
@@ -1480,13 +1609,23 @@ class TIFFSimulatorGUI_V4:
         if directory:
             self.output_dir.set(directory)
 
-    def _set_status_ui(self, message: str, color: str = "#27ae60"):
+    def _set_status_ui(self, message: str, color: str = None):
         """Status-Update (UI-Thread)."""
+        if color is None:
+            color = self.COLOR_SUCCESS
         self.status_label.config(text=message, fg=color)
         self.root.update()
 
-    def _update_status(self, message: str, color: str = "#27ae60"):
-        """Aktualisiert Status (thread-safe)."""
+    def _update_status(self, message: str, color: str = None):
+        """
+        Aktualisiert Status-Nachricht (thread-safe).
+
+        Args:
+            message: Status-Text
+            color: Farbe (default: COLOR_SUCCESS)
+        """
+        if color is None:
+            color = self.COLOR_SUCCESS
         import threading
         if threading.current_thread() is threading.main_thread():
             self._set_status_ui(message, color)
@@ -1817,8 +1956,8 @@ class TIFFSimulatorGUI_V4:
                 "z_amp_um": self.z_amp_um.get(),
                 "z_max_um": self.z_max_um.get(),
                 "astig_z0_um": self.astig_z0_um.get(),
-                "astig_coeffs": {"A_x": self.astig_Ax.get(), "B_x": 0.0,
-                               "A_y": self.astig_Ay.get(), "B_y": 0.0},
+                "astig_coeffs": {"A_x": self.astig_ax.get(), "B_x": 0.0,
+                               "A_y": self.astig_ay.get(), "B_y": 0.0},
                 # Legacy: Einfache Brechungsindex-Korrektur
                 "refractive_index_correction": self.refractive_index_correction.get(),
                 # ERWEITERTE Brechungsindex-Korrektur (NEU!)
