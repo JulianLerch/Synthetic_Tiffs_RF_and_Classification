@@ -1675,6 +1675,9 @@ class TIFFSimulatorGUI_V4:
             intensity = profile.get("intensity_scale", np.ones_like(z_positions))
             sigma_x = profile.get("sigma_x", np.ones_like(z_positions))
             sigma_y = profile.get("sigma_y", np.ones_like(z_positions))
+            refr_comp = profile.get("refractive_components") or {}
+            depth_factor = np.asarray(refr_comp.get("depth_factor"), dtype=np.float32) \
+                if isinstance(refr_comp.get("depth_factor"), np.ndarray) else np.ones_like(z_positions)
 
             sample_min = float(np.min(z_corrected)) if z_corrected.size else float(z_positions[0])
             sample_max = float(np.max(z_corrected)) if z_corrected.size else float(z_positions[-1])
@@ -1686,6 +1689,12 @@ class TIFFSimulatorGUI_V4:
 
             rayleigh = profile.get("rayleigh_range_um")
             use_adv = profile.get("use_advanced_refractive_correction", False)
+            besseling_factor = refr_comp.get("besseling_factor")
+            if isinstance(depth_factor, np.ndarray) and depth_factor.size > 0:
+                depth_min = float(np.min(depth_factor))
+                depth_max = float(np.max(depth_factor))
+            else:
+                depth_min = depth_max = 1.0
 
             summary_lines = [
                 f"Stage z: {z_positions[0]:+.2f} … {z_positions[-1]:+.2f} µm ({z_positions.size} Slices)",
@@ -1694,6 +1703,10 @@ class TIFFSimulatorGUI_V4:
                 f"σx/σy Verhältnis: {ratio_min:.2f} – {ratio_max:.2f}",
                 f"Refraktive Korrektur: {'aktiv' if use_adv else 'Legacy'}"
             ]
+
+            if besseling_factor is not None:
+                summary_lines.append(f"Besseling-Faktor: {float(besseling_factor):.3f}")
+            summary_lines.append(f"Deckglas-Faktor: {depth_min:.3f} – {depth_max:.3f}")
 
             if rayleigh and np.isfinite(rayleigh):
                 summary_lines.append(f"Rayleigh-Range: {rayleigh:.2f} µm")
@@ -1781,6 +1794,10 @@ class TIFFSimulatorGUI_V4:
         intensity = np.clip(profile.get("intensity_scale", np.ones_like(stage)), 0.0, 1.2)
         sigma_x = profile.get("sigma_x", np.ones_like(stage))
         sigma_y = profile.get("sigma_y", np.ones_like(stage))
+        refr_comp = profile.get("refractive_components") or {}
+        depth_factor = refr_comp.get("depth_factor", np.ones_like(stage))
+        if not isinstance(depth_factor, np.ndarray):
+            depth_factor = np.ones_like(stage)
         ratio = sigma_x / np.maximum(sigma_y, 1e-6)
 
         top = tk.Toplevel(self.root)
@@ -1804,6 +1821,7 @@ class TIFFSimulatorGUI_V4:
         ax2.plot(stage, sigma_x, label="σx [px]", color="#8e44ad")
         ax2.plot(stage, sigma_y, label="σy [px]", color="#c0392b")
         ax2.plot(stage, ratio, label="σx/σy", color="#f39c12", linestyle=":")
+        ax2.plot(stage, depth_factor, label="Deckglas-Faktor", color="#16a085", linestyle="--")
         ax2.set_xlabel("Stage z [µm]")
         ax2.set_ylabel("PSF-Breite / Verhältnis")
         ax2.grid(True, alpha=0.2)

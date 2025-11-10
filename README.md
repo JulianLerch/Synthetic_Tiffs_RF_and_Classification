@@ -428,6 +428,8 @@ save_tiff("z_calibration.tif", z_stack)
   sowie eine sphärische Aberrationskorrektur basierend auf den Brechungsindizes (Öl/Glas/Probe).
 - Die Intensität fällt realistisch gemäß Defokus **und** benutzerdefiniertem Intensitätsboden ab – ideal für ThunderSTORM-
   Kalibrierungen.
+- Die ThunderSTORM-Pipeline nutzt eine Besseling-inspirierte Bühnen→Probe-Korrektur (Basis-, Winkel- und Deckglas-Faktoren) und
+  schreibt die resultierenden Tiefenfaktoren in die Simulation-Metadaten.
 - Mit `evaluate_z_profile(detector, z_positions)` lässt sich das berechnete Profil (σx/σy, Intensität, korrigierte z-Positionen)
   ohne TIFF-Rendering inspizieren.
 - In der GUI gibt es im Tab „📐 3D & Astigmatismus“ ein neues Info-Panel mit Stage- und Sample-z-Bereichen, Intensitätsskalierung

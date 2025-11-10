@@ -173,105 +173,84 @@ def calculate_advanced_refractive_correction(
     n_polymer: float,
     NA: float,
     d_glass_um: float
-) -> np.ndarray:
-    """
-    Berechnet physikalisch korrekte z-Korrektur für TIRF-Mikroskopie.
+) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """Berechnet eine Besseling-inspirierte z-Korrektur für ThunderSTORM-Kalibrierungen.
 
-    Basiert auf der Theorie der sphärischen Aberration durch Brechungsindex-
-    Mismatch zwischen Immersionsöl, Deckglas und Probe.
+    Die Funktion modelliert die Konversion zwischen Bühne (scheinbare z-Position aus
+    ThunderSTORM) und tatsächlicher Probenhöhe. Berücksichtigt werden:
 
-    Physikalische Grundlagen:
-    -------------------------
-    Die scheinbare z-Position (z_apparent) weicht von der wahren Position (z_true)
-    ab durch drei Effekte:
+    * **Basis-Skalierung** ``n_polymer / n_oil`` – Snelliussche Brechung
+    * **Hoch-NA-Winkelterm** ``cos(θ_polymer) / cos(θ_oil)`` – gemäß Besseling et al.
+    * **Deckglas-Korrektur** – Tiefe-abhängige Verzerrung für dicke Coverslips
 
-    1. BASIS-SKALIERUNG: n_polymer / n_oil
-       - Grundlegende Brechung durch Medium-Übergang
-
-    2. NA-ABHÄNGIGER TERM: sqrt(n_oil² - NA²) / sqrt(n_polymer² - NA²)
-       - Berücksichtigt Apertur-begrenzte Abbildung
-       - Wichtig bei hoher NA (TIRF: NA ≈ 1.45-1.50)
-
-    3. TIEFENABHÄNGIGER TERM: 1 + (d_glass / z) * (1 - n_glass / n_polymer)
-       - Deckglas-Dicke induziert zusätzliche Aberration
-       - Effekt nimmt mit Fokustiefe ab
-       - WICHTIG: Nur für z > 0.1 µm angewendet (sonst numerische Instabilität)
-
-    Gesamtformel:
-    -------------
-    z_true = z_apparent * f_base * f_na * f_depth
-
-    wobei:
-    - f_base = n_polymer / n_oil
-    - f_na = sqrt(n_oil² - NA²) / sqrt(n_polymer² - NA²)
-    - f_depth = 1 + (d_glass / z_apparent) * (1 - n_glass / n_polymer)  für z > 0.1 µm
-                1.0                                                      für z ≤ 0.1 µm
-
-    Parameters:
-    -----------
-    z_apparent : np.ndarray
-        Scheinbare z-Positionen [µm] (vor Korrektur)
-    n_oil : float
-        Brechungsindex Immersionsöl (typisch: 1.518 für Olympus TIRF-Öl)
-    n_glass : float
-        Brechungsindex Deckglas (typisch: 1.523 für High Precision Coverslide)
-    n_polymer : float
-        Brechungsindex Polymer/Medium (z.B. 1.47-1.49 für PMMA, 1.33 für Wasser)
-    NA : float
-        Numerische Apertur des Objektivs (z.B. 1.50 für Olympus UPLAPO100XOHR)
-    d_glass_um : float
-        Deckglas-Dicke [µm] (typisch: 170 µm für #1.5 High Precision Slides)
+    Zusätzlich werden numerische Stabilität und Saturierung bei Grenzwerten
+    implementiert, sodass realistische Korrekturkurven für ThunderSTORM-Presets
+    entstehen.
 
     Returns:
-    --------
-    np.ndarray : Korrigierte z-Positionen [µm]
-
-    Beispiel:
-    ---------
-    >>> z_app = np.array([0.0, 0.5, 1.0, 1.5, 2.0])  # µm
-    >>> z_corr = calculate_advanced_refractive_correction(
-    ...     z_app, n_oil=1.518, n_glass=1.523, n_polymer=1.47, NA=1.50, d_glass_um=170.0
-    ... )
-
-    Referenzen:
-    -----------
-    - Pawley, J. (2006): Handbook of Biological Confocal Microscopy
-    - Hell, S. W. (2009): Far-field optical nanoscopy
-    - Diaspro, A. (2002): Confocal and Two-Photon Microscopy
+        Tupel aus ``(z_corrected, details)``. ``details`` enthält skalare Faktoren
+        (Basis-, Winkel-, Glas-Mismatch) sowie das pro z berechnete ``depth_factor``.
     """
 
-    # Sicherheit: Vermeide Division durch 0
-    z_safe = np.where(np.abs(z_apparent) < 1e-6, 1e-6, z_apparent)
+    z_arr = np.asarray(z_apparent, dtype=np.float32)
+    if z_arr.ndim == 0:
+        z_arr = z_arr.reshape(1)
 
-    # 1. BASIS-SKALIERUNG
+    # Sicherheit: clamp indices
+    n_oil = float(max(n_oil, 1e-6))
+    n_glass = float(max(n_glass, 1e-6))
+    n_polymer = float(max(n_polymer, 1e-6))
+    NA = float(max(NA, 0.0))
+    d_glass_um = float(max(d_glass_um, 1e-6))
+
+    # Snell: sin(theta_oil) = NA / n_oil (geklammert auf [0, 0.999])
+    sin_theta_oil = min(NA / n_oil, 0.9999)
+    sin_theta_glass = min((n_oil / n_glass) * sin_theta_oil, 0.9999)
+    sin_theta_polymer = min((n_oil / n_polymer) * sin_theta_oil, 0.9999)
+
+    cos_theta_oil = np.sqrt(1.0 - sin_theta_oil ** 2)
+    cos_theta_glass = np.sqrt(1.0 - sin_theta_glass ** 2)
+    cos_theta_polymer = np.sqrt(max(1e-6, 1.0 - sin_theta_polymer ** 2))
+
     f_base = n_polymer / n_oil
 
-    # 2. NA-ABHÄNGIGER TERM
-    # Prüfe ob NA physikalisch sinnvoll ist (NA < n_oil und NA < n_polymer)
     if NA >= n_oil or NA >= n_polymer:
-        # Fallback auf einfache Korrektur wenn NA zu groß
-        print(f"⚠️  WARNUNG: NA={NA:.3f} >= n_oil={n_oil:.3f} oder n_polymer={n_polymer:.3f}")
-        print(f"    → Verwende vereinfachte Korrektur (nur f_base)")
-        f_na = 1.0
+        # Physikalisch unmöglich → fallback auf Basis-Skalierung
+        f_angle = 1.0
+        angle_valid = False
     else:
-        f_na = np.sqrt(n_oil**2 - NA**2) / np.sqrt(n_polymer**2 - NA**2)
+        f_angle = cos_theta_polymer / cos_theta_oil
+        angle_valid = True
 
-    # 3. TIEFENABHÄNGIGER TERM (Deckglas-Aberration)
-    # WICHTIG: Dieser Term ist nur für positive z > z_threshold physikalisch gültig!
-    # Für z ≈ 0 oder negativ würde f_depth explodieren oder negativ werden.
-    z_threshold_um = 0.1  # Minimale z-Position für Tiefenkorrektur [µm]
+    besseling_factor = f_base * f_angle
 
-    # Berechne f_depth nur für z > z_threshold, sonst f_depth = 1.0
-    f_depth = np.where(
-        z_apparent > z_threshold_um,
-        1.0 + (d_glass_um / np.maximum(z_apparent, z_threshold_um)) * (1.0 - n_glass / n_polymer),
-        1.0  # Keine Tiefenkorrektur für z ≤ z_threshold
-    )
+    # Glas-Mismatch (Besseling et al. berücksichtigen zusätzliche Schicht)
+    cos_theta_polymer_safe = max(cos_theta_polymer, 1e-6)
+    glass_mismatch = (n_glass * cos_theta_glass) / (n_polymer * cos_theta_polymer_safe)
+
+    # Depth factor: saturiert für große Tiefen, blendet unter 0.15 µm aus
+    z_abs = np.abs(z_arr)
+    z_norm = np.clip(z_abs / d_glass_um, 0.0, 4.0)
+    fade = 1.0 / (1.0 + np.exp(-(z_abs - 0.15) / 0.05))
+    depth_factor = 1.0 + fade * z_norm * (glass_mismatch - 1.0)
+
+    # Zusätzliche sphärische Aberration (quadratischer Term)
+    aberr_term = 1.0 + fade * (z_abs / d_glass_um) ** 2 * (n_glass - n_polymer) / n_polymer
+    depth_factor *= np.clip(aberr_term, 0.7, 1.6)
 
     # Gesamtkorrektur
-    z_corrected = z_apparent * f_base * f_na * f_depth
+    z_corrected = z_arr * besseling_factor * depth_factor
 
-    return z_corrected
+    details = {
+        "base_factor": np.float32(f_base),
+        "angle_factor": np.float32(f_angle),
+        "besseling_factor": np.float32(besseling_factor),
+        "glass_mismatch": np.float32(glass_mismatch),
+        "depth_factor": depth_factor.astype(np.float32),
+        "angle_valid": bool(angle_valid),
+    }
+
+    return z_corrected.astype(np.float32), details
 
 
 def compute_rayleigh_range_um(
@@ -291,6 +270,15 @@ def compute_rayleigh_range_um(
         return float("inf")
 
     return float(np.pi * waist_um ** 2 / wavelength_um)
+
+
+def _safe_float(value, default: float = 0.0) -> float:
+    """Robuste float-Konvertierung für Metadata-Ausgaben."""
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 # ============================================================================
@@ -712,6 +700,7 @@ class PSFGeneratorOptimized:
 
         # Brechungsindex-Korrektur Einstellungen
         self.use_advanced_correction = False
+        self._last_correction_details: Optional[Dict[str, np.ndarray]] = None
         if astigmatism:
             self.use_advanced_correction = bool(
                 meta.get("use_advanced_refractive_correction", False)
@@ -744,8 +733,9 @@ class PSFGeneratorOptimized:
                 "intensity_scale": empty
             }
 
+        corr_details: Optional[Dict[str, np.ndarray]] = None
         if self.use_advanced_correction:
-            z_corrected = calculate_advanced_refractive_correction(
+            z_corrected, corr_details = calculate_advanced_refractive_correction(
                 z_positions,
                 n_oil=self.n_oil,
                 n_glass=self.n_glass,
@@ -753,8 +743,18 @@ class PSFGeneratorOptimized:
                 NA=self.NA,
                 d_glass_um=self.d_glass_um
             )
+            self._last_correction_details = corr_details
         else:
             z_corrected = z_positions * float(self.refractive_correction)
+            corr_details = {
+                "base_factor": np.float32(self.refractive_correction),
+                "angle_factor": np.float32(1.0),
+                "besseling_factor": np.float32(self.refractive_correction),
+                "glass_mismatch": np.float32(1.0),
+                "depth_factor": np.ones_like(z_positions, dtype=np.float32),
+                "angle_valid": True,
+            }
+            self._last_correction_details = corr_details
 
         rayleigh = max(self.rayleigh_range_um, 1e-6)
         if self.astigmatism:
@@ -781,17 +781,22 @@ class PSFGeneratorOptimized:
         sigma_x = self.sigma_px * defocus_x * np.sqrt(term_x)
         sigma_y = self.sigma_px * defocus_y * np.sqrt(term_y)
 
-        intensity_scale = self._axial_intensity_scaling(z_corrected)
+        intensity_scale = self._axial_intensity_scaling(z_corrected, corr_details)
 
         return {
             "z_apparent": z_positions.astype(np.float32),
             "z_corrected": z_corrected.astype(np.float32),
             "sigma_x": sigma_x.astype(np.float32),
             "sigma_y": sigma_y.astype(np.float32),
-            "intensity_scale": intensity_scale.astype(np.float32)
+            "intensity_scale": intensity_scale.astype(np.float32),
+            "refractive_components": corr_details,
         }
 
-    def _axial_intensity_scaling(self, z_corrected: np.ndarray) -> np.ndarray:
+    def _axial_intensity_scaling(
+        self,
+        z_corrected: np.ndarray,
+        corr_details: Optional[Dict[str, np.ndarray]] = None
+    ) -> np.ndarray:
         """Berechnet Intensitätsskala basierend auf Defokus und Aberration."""
 
         if not np.isfinite(self.rayleigh_range_um):
@@ -814,6 +819,15 @@ class PSFGeneratorOptimized:
             scale *= np.exp(- (z_corrected / self.z_amp_um) ** 2)
         if self.axial_intensity_floor > 0:
             scale = np.clip(scale, self.axial_intensity_floor, 1.0)
+
+        if corr_details:
+            angle_factor = float(corr_details.get("angle_factor", 1.0))
+            depth_factor = np.asarray(
+                corr_details.get("depth_factor", np.ones_like(scale)),
+                dtype=np.float32
+            )
+            scale *= np.clip(angle_factor, 0.2, 1.0)
+            scale *= 1.0 / np.clip(depth_factor, 0.6, 1.6)
 
         return scale.astype(np.float32)
 
@@ -1631,6 +1645,8 @@ class TIFFSimulatorOptimized:
         sigma_y_profile = []
         intensity_profile = []
         aspect_ratio_profile = []
+        depth_factor_profile = []
+        besseling_profile = []
 
         for z_idx, z_um in enumerate(z_positions):
             if progress_callback:
@@ -1668,6 +1684,7 @@ class TIFFSimulatorOptimized:
             z_stack[z_idx] = np.clip(frame, 0, 65535).astype(np.uint16)
 
             stage_positions.append(float(z_um))
+            refr_comp = profile.get("refractive_components") or {}
             if profile["z_corrected"].size > 0:
                 sample_z = float(profile["z_corrected"][0])
                 intensity_scale = float(profile["intensity_scale"][0])
@@ -1688,10 +1705,20 @@ class TIFFSimulatorOptimized:
             else:
                 aspect_ratio_profile.append(1.0)
 
+            depth_val = refr_comp.get("depth_factor")
+            if isinstance(depth_val, np.ndarray) and depth_val.size > 0:
+                depth_factor_profile.append(float(depth_val[0]))
+            else:
+                depth_factor_profile.append(1.0)
+
+            besseling_val = refr_comp.get("besseling_factor")
+            besseling_profile.append(float(besseling_val) if besseling_val is not None else 1.0)
+
         if progress_callback:
             progress_callback(n_slices, n_slices, "z-Stack fertig!")
 
         # Update Metadata
+        refr_meta = self.psf_gen._last_correction_details or {}
         self.metadata.update({
             "image_size": image_size,
             "num_spots": num_spots,
@@ -1710,7 +1737,14 @@ class TIFFSimulatorOptimized:
             "use_advanced_refractive_correction": bool(self.psf_gen.use_advanced_correction),
             "refractive_index_correction_factor": float(
                 self.psf_gen.refractive_correction if self.psf_gen.refractive_correction is not None else 1.0
-            )
+            ),
+            "refractive_index_components": {
+                "base_factor": _safe_float(refr_meta.get("base_factor", 1.0)),
+                "angle_factor": _safe_float(refr_meta.get("angle_factor", 1.0)),
+                "glass_mismatch": _safe_float(refr_meta.get("glass_mismatch", 1.0)),
+                "depth_factor_profile": depth_factor_profile,
+                "besseling_factor_profile": besseling_profile,
+            }
         })
 
         return z_stack
