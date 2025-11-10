@@ -36,7 +36,7 @@ if exist dist rmdir /s /q dist
 echo.
 
 REM Build
-echo 🔨 Baue Application (One-File)...
+echo 🔨 Baue Application (One-File) inkl. neuer Z-Stack-Physik...
 echo    Dies kann 2-5 Minuten dauern...
 echo.
 
@@ -47,8 +47,38 @@ python -m PyInstaller ^
     --add-data="tiff_simulator_v3.py;." ^
     --add-data="metadata_exporter.py;." ^
     --add-data="batch_simulator.py;." ^
+    --add-data="track_analysis.py;." ^
+    --add-data="rf_trainer.py;." ^
+    --add-data="rf_training_session.py;." ^
+    --add-data="adaptive_rf_trainer.py;." ^
+    --add-data="diffusion_label_utils.py;." ^
+    --add-data="README.md;." ^
+    --add-data="QUICKSTART.md;." ^
+    --add-data="CHANGELOG.md;." ^
+    --add-data="PHYSICS_VALIDATION.md;." ^
+    --add-data="BATCH_MODE_GUIDE.md;." ^
+    --add-data="RF_USAGE_GUIDE.md;." ^
+    --add-data="TRACK_ANALYSIS_GUIDE.md;." ^
+    --add-data="ADAPTIVE_RF_GUIDE.md;." ^
+    --add-data="SETUP_GUIDE.md;." ^
     --hidden-import=PIL._tkinter_finder ^
+    --hidden-import=tkinter ^
+    --hidden-import=tkinter.filedialog ^
+    --hidden-import=tkinter.messagebox ^
+    --hidden-import=tkinter.ttk ^
     --hidden-import=numpy.core ^
+    --hidden-import=scipy.stats ^
+    --hidden-import=scipy.special ^
+    --hidden-import=sklearn ^
+    --hidden-import=sklearn.ensemble ^
+    --hidden-import=sklearn.tree ^
+    --hidden-import=joblib ^
+    --hidden-import=matplotlib ^
+    --hidden-import=matplotlib.backends.backend_tkagg ^
+    --hidden-import=matplotlib.backends.tkagg ^
+    --hidden-import=matplotlib.backends._tkagg ^
+    --hidden-import=matplotlib.backends.backend_agg ^
+    --hidden-import=matplotlib.figure ^
     tiff_simulator_gui_v4.py
 
 echo.
@@ -65,6 +95,11 @@ if exist "dist\TIFF_Simulator_V4.exe" (
     echo.
     echo 🚀 FERTIG! Einfach doppelklicken:
     echo    dist\TIFF_Simulator_V4.exe
+    echo.
+    echo 🆕 Enthaltene Features:
+    echo    • ThunderSTORM Z-Stack Preset mit realistischer Brechungsindex-Korrektur
+    echo    • Live Z-Profil Vorschau (Matplotlib) fuer Feinjustierung
+    echo    • Erweiterte Guides (README, QUICKSTART, PHYSICS_VALIDATION, ...)
     echo.
     echo 📝 Hinweis: Erster Start kann 3-5 Sekunden dauern
     echo            (entpackt temporäre Dateien)

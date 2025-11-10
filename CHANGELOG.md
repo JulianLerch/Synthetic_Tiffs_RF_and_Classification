@@ -130,6 +130,17 @@
 
 ---
 
+## Unreleased
+
+### Added
+- Bundled ThunderSTORM-z-Stack-Physik, Live z-Profil und erweiterte Guides direkt in die PyInstaller-Desktop-Builds (`build_desktop_app.bat/.sh`).
+- Aktualisierte `build_quick.bat`, um alle neuen Module, Dokumentationen und Matplotlib-Abhängigkeiten in den One-File-Build einzuschließen.
+
+### Improved
+- Dokumentation ergänzt, wie die aktualisierte `.bat`-Installation die neuen Features automatisch in den `dist/`-Ordner bringt.
+
+---
+
 ## Version 3.0 - Oktober 2025
 
 ### Features

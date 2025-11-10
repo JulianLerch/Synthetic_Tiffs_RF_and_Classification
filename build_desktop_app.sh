@@ -19,7 +19,7 @@ rm -rf build/ dist/
 
 # Build the application
 echo ""
-echo "🔨 Building application with PyInstaller..."
+echo "🔨 Building application with PyInstaller (inkl. neuer Z-Stack-Physik & GUI)..."
 pyinstaller build_app.spec
 
 # Check if build was successful (handles V4 and V4.1 artifact names)
@@ -40,6 +40,11 @@ if [ -f "dist/TIFF_Simulator_V4.1.exe" ] || [ -d "dist/TIFF_Simulator_V4.1" ] \
     fi
     echo ""
     echo "🚀 You can now run the application without Python installed!"
+    echo ""
+    echo "🆕 Enthaltene Features:"
+    echo "   • ThunderSTORM Z-Stack Preset mit realistischer Brechungsindex-Korrektur"
+    echo "   • Live Z-Profil Vorschau (Matplotlib) fuer Feinjustierung"
+    echo "   • Erweiterte Guides (README, QUICKSTART, PHYSICS_VALIDATION, ...)"
 else
     echo ""
     echo "❌ Build failed! Check the output above for errors."

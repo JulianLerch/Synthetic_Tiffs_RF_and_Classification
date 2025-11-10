@@ -132,6 +132,22 @@ exporter.export_all(sim.get_metadata(), "simulation")
 
 ---
 
+## 🪟 WINDOWS-DESKTOP-BUILD (PYINSTALLER)
+
+Möchtest du eine eigenständige EXE mit allen aktuellen GUI-Verbesserungen (ThunderSTORM Z-Stack Preset, Live z-Profil, neue Guides) erzeugen? So klappt's:
+
+1. **ZIP entpacken** und ins Projektverzeichnis wechseln.
+2. **`build_desktop_app.bat` doppelklicken** (oder `build_quick.bat` für den kompakten One-File-Build).
+3. Das Skript installiert falls nötig PyInstaller, räumt alte Builds auf und paketiert die App mit allen neuen Modulen & Dokumentationen.
+4. Nach erfolgreichem Lauf findest du die EXE unter `dist/`:
+   - `dist/TIFF_Simulator_V4.1.exe` *(One-File)* oder
+   - `dist/TIFF_Simulator_V4.1/TIFF_Simulator_V4.1.exe` *(Ordnerstruktur)*
+5. Starte die EXE – die neue z-Stack-Physik, ThunderSTORM-Preset, Matplotlib-Vorschau und die mitgelieferten Guides sind direkt integriert.
+
+> 💡 Die `.bat`-Dateien können jederzeit erneut ausgeführt werden, um nach Updates eine frische Desktop-Version zu erzeugen.
+
+---
+
 ## 🔬 PHYSIKALISCHES MODELL
 
 ### 1. Point Spread Function (PSF)

@@ -23,9 +23,16 @@ a = Analysis(
         ('adaptive_rf_trainer.py', '.'),
         ('diffusion_label_utils.py', '.'),
 
-        # Documentation (Optional)
+        # Extended Documentation for Desktop Bundle
         ('README.md', '.'),
         ('QUICKSTART.md', '.'),
+        ('CHANGELOG.md', '.'),
+        ('PHYSICS_VALIDATION.md', '.'),
+        ('BATCH_MODE_GUIDE.md', '.'),
+        ('RF_USAGE_GUIDE.md', '.'),
+        ('TRACK_ANALYSIS_GUIDE.md', '.'),
+        ('ADAPTIVE_RF_GUIDE.md', '.'),
+        ('SETUP_GUIDE.md', '.'),
     ],
     hiddenimports=[
         # GUI & Basics
@@ -69,10 +76,15 @@ a = Analysis(
         # Matplotlib (Plotting)
         'matplotlib',
         'matplotlib.pyplot',
+        'matplotlib.figure',
         'matplotlib.backends',
         'matplotlib.backends.backend_pdf',
         'matplotlib.backends.backend_agg',
-        'matplotlib.figure',
+        'matplotlib.backends.backend_tkagg',
+        'matplotlib.backends.tkagg',
+        'matplotlib.backends._tkagg',
+        'matplotlib.backends._backend_tk',
+
 
         # OpenPyXL (Excel Export)
         'openpyxl',

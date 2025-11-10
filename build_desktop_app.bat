@@ -24,7 +24,7 @@ if exist dist rmdir /s /q dist
 
 REM Build the application
 echo.
-echo 🔨 Building application with PyInstaller...
+echo 🔨 Building application with PyInstaller (inkl. neuer Z-Stack-Physik & GUI)...
 echo    (Dies kann einige Minuten dauern...)
 echo.
 python -m PyInstaller build_app.spec
@@ -40,6 +40,11 @@ if exist "dist\TIFF_Simulator_V4.1.exe" (
     echo 🚀 You can now run the application without Python installed!
     echo    Simply double-click: dist\TIFF_Simulator_V4.1.exe
     echo.
+    echo 🆕 Enthaltene Features:
+    echo    • ThunderSTORM Z-Stack Preset mit realistischer Brechungsindex-Korrektur
+    echo    • Live Z-Profil Vorschau (Matplotlib) fuer Feinjustierung
+    echo    • Erweiterte Guides (README, QUICKSTART, PHYSICS_VALIDATION, ...)
+    echo.
 ) else if exist "dist\TIFF_Simulator_V4.1\" (
     echo.
     echo ✅ Build successful!
@@ -48,6 +53,11 @@ if exist "dist\TIFF_Simulator_V4.1.exe" (
     echo.
     echo 🚀 To run: dist\TIFF_Simulator_V4.1\TIFF_Simulator_V4.1.exe
     echo.
+    echo 🆕 Enthaltene Features:
+    echo    • ThunderSTORM Z-Stack Preset mit realistischer Brechungsindex-Korrektur
+    echo    • Live Z-Profil Vorschau (Matplotlib) fuer Feinjustierung
+    echo    • Erweiterte Guides (README, QUICKSTART, PHYSICS_VALIDATION, ...)
+    echo.
 ) else if exist "dist\TIFF_Simulator_V4\" (
     echo.
     echo ✅ Build successful!
@@ -55,6 +65,11 @@ if exist "dist\TIFF_Simulator_V4.1.exe" (
     echo 📦 Application location: dist\TIFF_Simulator_V4\
     echo.
     echo 🚀 To run: dist\TIFF_Simulator_V4\TIFF_Simulator_V4.exe
+    echo.
+    echo 🆕 Enthaltene Features:
+    echo    • ThunderSTORM Z-Stack Preset mit realistischer Brechungsindex-Korrektur
+    echo    • Live Z-Profil Vorschau (Matplotlib) fuer Feinjustierung
+    echo    • Erweiterte Guides (README, QUICKSTART, PHYSICS_VALIDATION, ...)
     echo.
 ) else (
     echo.
