@@ -1,5 +1,5 @@
 # ============================================================================
-# TIFF SIMULATOR V3.0 - DEPENDENCIES
+# TIFF SIMULATOR V5.0 - DEPENDENCIES
 # ============================================================================
 #
 # Wissenschaftlich validierte Package-Versionen für reproduzierbare Simulationen
@@ -19,27 +19,15 @@
 # - Schnelle Array-Operationen (C-optimiert)
 # - Zufallszahlen-Generierung (Mersenne Twister)
 # - Mathematische Funktionen (exp, sqrt, etc.)
-# - Lineare Algebra (falls benötigt)
+# - Lineare Algebra
 #
 # Version ≥1.20.0: Einführung von stabileren Random Number Generators
 # Version ≥1.21.0: Verbesserte Typisierung für wissenschaftliche Anwendungen
 numpy>=1.21.0
 
-# ============================================================================
-# MASCHINELLES LERNEN
-# ============================================================================
-
-# scikit-learn: Random-Forest-Training für Diffusionsklassifikation
-# - Mächtige Implementierung von RandomForestClassifier
-# - Enthält Feature-Importances und robuste Parallelisierung
-scikit-learn>=1.2.0
-
-# joblib: Speichern/Laden großer Modelle (enthalten in scikit-learn, hier explizit)
-joblib>=1.2.0
-
 # SciPy: Erweiterte wissenschaftliche Funktionen
-# - Benötigt für stats.linregress in MSD/D Berechnung
 # - Signal Processing, Optimization, Stats
+# - Benötigt für wissenschaftliche Berechnungen
 scipy>=1.8.0
 
 # ============================================================================
@@ -64,7 +52,6 @@ Pillow>=9.2.0
 # - Kann deaktiviert werden wenn nur TIFFs generiert werden
 #
 # Version ≥3.5.0: Verbessertes Layout-System
-# Version ≥3.6.0: Bessere 3D-Plotting-Funktionen
 matplotlib>=3.5.0
 
 # ============================================================================
@@ -79,24 +66,6 @@ matplotlib>=3.5.0
 # Version ≥4.60.0: Stabile API
 # Version ≥4.64.0: Bessere Unicode-Unterstützung
 tqdm>=4.64.0
-
-# ============================================================================
-# EXCEL EXPORT
-# ============================================================================
-
-# openpyxl: Excel-Datei-Erstellung
-# - Multi-Sheet Support
-# - Benötigt für Track-Analysis Excel-Export
-openpyxl>=3.0.0
-
-# ============================================================================
-# OPTIONALE DEPENDENCIES
-# ============================================================================
-
-# pandas: Datenanalyse und CSV-Handling
-# - Wird aktuell NICHT benötigt
-# - Nützlich für erweiterte Batch-Metadaten-Analysen
-# pandas>=1.4.0  # Optional
 
 # ============================================================================
 # KOMPATIBILITÄTS-HINWEISE
@@ -117,19 +86,9 @@ openpyxl>=3.0.0
 #
 # Jupyter Notebook:
 # - Alle Pakete kompatibel
-# - GUI funktioniert nicht in reinem Notebook
-# - Aber: Alle Funktionen programmtisch nutzbar
+# - GUI funktioniert mit tkinter
 #
 # ============================================================================
-
-# ============================================================================
-# DESKTOP APP BUILD
-# ============================================================================
-
-# PyInstaller: Erstellt standalone executables
-# - Benötigt nur für das Bauen der Desktop-App
-# - Nicht erforderlich für normale Python-Nutzung
-pyinstaller>=5.0.0
 
 # ============================================================================
 # PERFORMANCE OPTIMIZATION (Optional)
@@ -148,9 +107,9 @@ pyinstaller>=5.0.0
 # Kommentiere die obigen Einträge aus und nutze diese:
 #
 # numpy==1.24.3
+# scipy==1.10.1
 # Pillow==10.0.0
 # matplotlib==3.7.2
 # tqdm==4.65.0
-# pyinstaller==5.13.0
 #
 # ============================================================================
