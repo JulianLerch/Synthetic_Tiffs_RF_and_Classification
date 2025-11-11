@@ -37,9 +37,50 @@ from typing import Tuple, List, Optional, Dict, Callable
 import warnings
 from datetime import datetime
 
-from diffusion_label_utils import expand_labels
-
 warnings.filterwarnings('ignore')
+
+
+# ============================================================================
+# LABEL EXPANSION UTILITY (inline - no external dependency)
+# ============================================================================
+
+def expand_labels(initial_label: str, switch_log: list, num_frames: int) -> list:
+    """
+    Expandiert Diffusionslabels über alle Frames basierend auf Switch-Log.
+
+    Parameters:
+    -----------
+    initial_label : str
+        Initialer Diffusionstyp
+    switch_log : list
+        Liste von Switches [{"frame": int, "from": str, "to": str}, ...]
+    num_frames : int
+        Gesamtzahl Frames
+
+    Returns:
+    --------
+    list : Label für jeden Frame
+    """
+    labels = [initial_label] * num_frames
+
+    if not switch_log:
+        return labels
+
+    # Sortiere Switches nach Frame
+    sorted_switches = sorted(switch_log, key=lambda x: x.get("frame", 0))
+
+    current_label = initial_label
+    for switch in sorted_switches:
+        frame_idx = int(switch.get("frame", 0))
+        new_label = switch.get("to", current_label)
+
+        # Update alle Frames ab diesem Switch
+        for i in range(frame_idx, num_frames):
+            labels[i] = new_label
+
+        current_label = new_label
+
+    return labels
 
 
 @dataclass
