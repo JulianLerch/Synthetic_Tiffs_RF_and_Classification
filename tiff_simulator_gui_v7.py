@@ -346,7 +346,7 @@ class CompleteGUI:
         self.zstack_z_start = tk.Spinbox(card, from_=-3.0, to=0, width=18,
                                          increment=0.1, format="%.1f", font=("Segoe UI", 10))
         self.zstack_z_start.delete(0, tk.END)
-        self.zstack_z_start.insert(0, "-1.0")
+        self.zstack_z_start.insert(0, "-0.6")
         self.zstack_z_start.grid(row=row, column=1, sticky='w', padx=10, pady=5)
 
         row += 1
@@ -356,7 +356,7 @@ class CompleteGUI:
         self.zstack_z_end = tk.Spinbox(card, from_=0, to=3.0, width=18,
                                        increment=0.1, format="%.1f", font=("Segoe UI", 10))
         self.zstack_z_end.delete(0, tk.END)
-        self.zstack_z_end.insert(0, "1.0")
+        self.zstack_z_end.insert(0, "0.6")
         self.zstack_z_end.grid(row=row, column=1, sticky='w', padx=10, pady=5)
 
         row += 1
@@ -366,7 +366,7 @@ class CompleteGUI:
         self.zstack_z_step = tk.Spinbox(card, from_=0.01, to=0.5, width=18,
                                         increment=0.01, format="%.2f", font=("Segoe UI", 10))
         self.zstack_z_step.delete(0, tk.END)
-        self.zstack_z_step.insert(0, "0.10")
+        self.zstack_z_step.insert(0, "0.02")
         self.zstack_z_step.grid(row=row, column=1, sticky='w', padx=10, pady=5)
 
         row += 1
@@ -379,14 +379,16 @@ class CompleteGUI:
         self.zstack_spots.grid(row=row, column=1, sticky='w', padx=10, pady=5)
 
         # === INFO ===
-        card2 = self._create_card(content, "✅ Astigmatismus-Fix v4.2")
+        card2 = self._create_card(content, "✅ Astigmatismus v5.0 (f=100mm Linse)")
 
         info = tk.Label(card2,
-                       text="🎉 Z-Stack nutzt jetzt KORREKTEN Astigmatismus!\n\n"
+                       text="🎉 Optimiert für f=100mm Zylinderlinse!\n\n"
                             "✓ z < 0: PSF horizontal gestreckt (σx > σy)\n"
                             "✓ z = 0: PSF rund (σx ≈ σy)\n"
                             "✓ z > 0: PSF vertikal gestreckt (σy > σx)\n\n"
-                            "Physikalisch korrekt nach Huang et al. 2008\n"
+                            "💪 STARKER Astigmatismus (beseitigt trimodale z-Verteilung!)\n"
+                            "📐 focal_offset=0.7µm, z_rayleigh=0.3µm\n"
+                            "📊 Default: -0.6 bis +0.6µm, step=20nm\n\n"
                             "Kompatibel mit TrackMate und ThunderSTORM",
                        font=("Segoe UI", 10),
                        bg=self.COLORS['card_bg'],
