@@ -50,3 +50,5 @@ Thumbs.db
 output/
 results/
 batch_output/
+test_astigmatism_output/
+test_comonomer_output/
