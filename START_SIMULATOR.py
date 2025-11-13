@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
-🚀 TIFF SIMULATOR V5.0 - LAUNCHER
-==================================
+🚀 TIFF SIMULATOR V7.1 - COMPLETE EDITION LAUNCHER
+===================================================
 
-Einfacher Launcher mit Dependency-Check für die moderne GUI
+Launcher für die NEUE komplette GUI mit allen Features
 
 Features:
 - Prüft alle Dependencies
-- Benutzerfreundliche Fehlermeldungen
-- Startet die moderne GUI V5.0
+- Neue GUI v7.1 mit:
+  * Alle Parameter einstellbar
+  * Astigmatismus-Fix v4.2
+  * Erweiterte Physik-Parameter
+  * Flexibler Batch-Modus
 
-Version: 5.0 - November 2025
+Version: 7.1 - November 2025
 """
 
 import sys
@@ -37,8 +40,8 @@ def check_package(package_name):
 
 def main():
     """Hauptfunktion."""
-    print("🔬 TIFF Simulator V5.0 - Starting...")
-    print("=" * 50)
+    print("🔬 TIFF Simulator V7.1 COMPLETE EDITION - Starting...")
+    print("=" * 60)
     print()
 
     # Check Python version
@@ -97,20 +100,27 @@ def main():
 
     print()
     print("=" * 50)
-    print("🚀 Starte TIFF Simulator V5.0 GUI...")
+    print("🚀 Starte TIFF Simulator V7.1 GUI (COMPLETE EDITION)...")
     print("=" * 50)
     print()
 
-    # Start GUI
+    # Start NEW GUI V7.1
+    print("🆕 NEUE FEATURES V7.1:")
+    print("   ✓ Astigmatismus-Fix v4.2 (physikalisch korrekt)")
+    print("   ✓ Alle Parameter einstellbar")
+    print("   ✓ Erweiterte Physik (Brechungsindex, etc.)")
+    print("   ✓ Flexibler Batch-Modus")
+    print()
+
     try:
-        from tiff_simulator_gui import main as gui_main
+        from tiff_simulator_gui_v7 import main as gui_main
         gui_main()
 
     except ImportError as e:
         print(f"\n❌ Import-Fehler: {e}")
         print("\nBitte stelle sicher, dass alle Dateien vorhanden sind:")
         print("   - tiff_simulator_v3.py")
-        print("   - tiff_simulator_gui.py")
+        print("   - tiff_simulator_gui_v7.py (NEUE GUI!)")
         print("   - batch_simulator.py")
         print("   - metadata_exporter.py")
         input("\nDrücke Enter zum Beenden...")
