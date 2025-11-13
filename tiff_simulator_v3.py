@@ -292,7 +292,9 @@ def calculate_advanced_refractive_correction(
     # 3. TIEFENABHÄNGIGER TERM (Deckglas-Aberration)
     # WICHTIG: Dieser Term ist nur für positive z > z_threshold physikalisch gültig!
     # Für z ≈ 0 oder negativ würde f_depth explodieren oder negativ werden.
-    z_threshold_um = 0.1  # Minimale z-Position für Tiefenkorrektur [µm]
+    # CRITICAL FIX: Threshold erhöht auf 2.0µm - verhindert Explosion bei Z-Stacks (±0.5µm)!
+    # Der 1/z Term ist für dünne Proben (<2µm) instabil und nicht nötig.
+    z_threshold_um = 2.0  # Minimale z-Position für Tiefenkorrektur [µm] (war 0.1 - TOO LOW!)
 
     # Berechne f_depth nur für z > z_threshold, sonst f_depth = 1.0
     f_depth = np.where(
