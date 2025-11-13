@@ -138,8 +138,8 @@ TDI_PRESET = DetectorPreset(
         # Z-Stack Kalibrierungs-Parameter (OPTIMIERT für f=100mm Zylinderlinse!)
         "z_amp_um": 1.2,  # Intensitätsabfall-Skala in z [µm] - OPTIMIERT: größer für weiteren z-Range
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
-        "astig_focal_offset_um": 0.7,  # Halbe Fokustrennung [µm] - ERHÖHT für f=100mm (10x stärker als f=1000mm!)
-        "astig_z_rayleigh_um": 0.3,  # Rayleigh-Bereich (depth of focus) [µm] - REDUZIERT für steilere PSF-Kurve!
+        "astig_focal_offset_um": 0.5,  # Halbe Fokustrennung [µm] - Optimale Balance für f=100mm!
+        "astig_z_rayleigh_um": 0.4,  # Rayleigh-Bereich (depth of focus) [µm] - Verhindert PSF-Explosion!
         # Brechungsindex-Korrektur (REALISTISCH für Polymer-Filme)
         "use_advanced_refractive_correction": True,  # Nutzt realistische Brechungsindizes
         "n_oil": 1.518,       # Brechungsindex Immersionsöl (Standard)
@@ -177,8 +177,8 @@ TETRASPECS_PRESET = DetectorPreset(
         # Z-Stack Kalibrierungs-Parameter (OPTIMIERT für f=100mm Zylinderlinse!)
         "z_amp_um": 1.2,  # Intensitätsabfall-Skala in z [µm] - OPTIMIERT: größer für weiteren z-Range
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
-        "astig_focal_offset_um": 0.7,  # Halbe Fokustrennung [µm] - ERHÖHT für f=100mm (10x stärker als f=1000mm!)
-        "astig_z_rayleigh_um": 0.3,  # Rayleigh-Bereich (depth of focus) [µm] - REDUZIERT für steilere PSF-Kurve!
+        "astig_focal_offset_um": 0.5,  # Halbe Fokustrennung [µm] - Optimale Balance für f=100mm!
+        "astig_z_rayleigh_um": 0.4,  # Rayleigh-Bereich (depth of focus) [µm] - Verhindert PSF-Explosion!
         # Brechungsindex-Korrektur (REALISTISCH für Polymer-Filme)
         "use_advanced_refractive_correction": True,  # Nutzt realistische Brechungsindizes
         "n_oil": 1.518,       # Brechungsindex Immersionsöl (Standard)
