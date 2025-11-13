@@ -727,20 +727,24 @@ class CompleteGUI:
                  cursor="hand2").pack(side=tk.LEFT, padx=5)
 
     def _create_card(self, parent, title):
-        """Create a styled card"""
-        frame = tk.Frame(parent, bg=self.COLORS['card_bg'],
+        """Create a styled card with content frame for grid layout"""
+        outer = tk.Frame(parent, bg=self.COLORS['card_bg'],
                         highlightbackground=self.COLORS['border'],
                         highlightthickness=1)
-        frame.pack(fill=tk.X, padx=15, pady=10)
+        outer.pack(fill=tk.X, padx=15, pady=10)
 
-        tk.Label(frame, text=title,
+        tk.Label(outer, text=title,
                 font=("Segoe UI", 12, "bold"),
                 bg=self.COLORS['card_bg'],
                 fg=self.COLORS['primary']).pack(anchor='w', padx=10, pady=(10, 5))
 
-        tk.Frame(frame, height=2, bg=self.COLORS['border']).pack(fill=tk.X, padx=10)
+        tk.Frame(outer, height=2, bg=self.COLORS['border']).pack(fill=tk.X, padx=10)
 
-        return frame
+        # Content frame for grid layout
+        content = tk.Frame(outer, bg=self.COLORS['card_bg'])
+        content.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        return content
 
     def _add_tooltip(self, parent, text, row, column):
         """Add a tooltip icon"""
