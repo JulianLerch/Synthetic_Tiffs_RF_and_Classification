@@ -53,3 +53,4 @@ batch_output/
 test_astigmatism_output/
 test_comonomer_output/
 test_zstack_calibration_output/
+test_batch_trackmate_output/
