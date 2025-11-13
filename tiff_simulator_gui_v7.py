@@ -934,7 +934,10 @@ class CompleteGUI:
                             else:
                                 num_spots = (spots_min + spots_max) // 2
 
-                            batch.add_simulation({
+                            # Generate filename
+                            filename = f"{detector.name.lower()}_t{int(t_poly)}min_rep{rep+1}.tif"
+
+                            batch.add_task({
                                 'detector': detector,
                                 'mode': 'polyzeit',
                                 't_poly_min': t_poly,
@@ -943,7 +946,7 @@ class CompleteGUI:
                                 'num_spots': num_spots,
                                 'num_frames': frames,
                                 'frame_rate_hz': 20.0,
-                                'filename_suffix': f"_t{int(t_poly)}min_rep{rep+1}"
+                                'filename': filename
                             })
 
                     batch.run()
@@ -953,11 +956,13 @@ class CompleteGUI:
                         self._update_status("🤖 Trainiere Random Forest...", True)
                         # TODO: Integrate RF training
 
-                    self._update_status(f"✅ Batch abgeschlossen! {len(times) * repeats} TIFFs", False)
+                    self._update_status(f"✅ Batch abgeschlossen! {len(times) * repeats} TIFFs + TrackMate XMLs", False)
                     messagebox.showinfo("Erfolg",
                                       f"Batch erfolgreich abgeschlossen!\n\n"
                                       f"Generiert: {len(times) * repeats} TIFFs\n"
-                                      f"Output: {self.output_dir}")
+                                      f"TrackMate XMLs: {len(times)} (pro Polyzeit)\n"
+                                      f"Output: {self.output_dir}\n\n"
+                                      f"Struktur: polyzeit_XXmin/ (alle Repeats + XML)")
 
                 except Exception as e:
                     self._update_status(f"❌ Fehler: {str(e)}", False)
