@@ -135,11 +135,11 @@ TDI_PRESET = DetectorPreset(
         "on_mean_frames": 4.0,
         "off_mean_frames": 6.0,
         "bleach_prob_per_frame": 0.002,
-        # Z-Stack Kalibrierungs-Parameter (FIXED: Wissenschaftlich korrekte Astigmatismus-Implementierung)
+        # Z-Stack Kalibrierungs-Parameter (OPTIMIERT für f=100mm Zylinderlinse!)
         "z_amp_um": 1.2,  # Intensitätsabfall-Skala in z [µm] - OPTIMIERT: größer für weiteren z-Range
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
-        "astig_focal_offset_um": 0.4,  # Halbe Fokustrennung [µm] - x-Fokus bei -c, y-Fokus bei +c
-        "astig_z_rayleigh_um": 0.6,  # Rayleigh-Bereich (depth of focus) [µm]
+        "astig_focal_offset_um": 0.7,  # Halbe Fokustrennung [µm] - ERHÖHT für f=100mm (10x stärker als f=1000mm!)
+        "astig_z_rayleigh_um": 0.3,  # Rayleigh-Bereich (depth of focus) [µm] - REDUZIERT für steilere PSF-Kurve!
         "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
         # ERWEITERTE Brechungsindex-Korrektur (NEU!)
         "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
@@ -175,11 +175,11 @@ TETRASPECS_PRESET = DetectorPreset(
         "on_mean_frames": 5.0,
         "off_mean_frames": 7.0,
         "bleach_prob_per_frame": 0.0015,
-        # Z-Stack Kalibrierungs-Parameter (FIXED: Wissenschaftlich korrekte Astigmatismus-Implementierung)
+        # Z-Stack Kalibrierungs-Parameter (OPTIMIERT für f=100mm Zylinderlinse!)
         "z_amp_um": 1.2,  # Intensitätsabfall-Skala in z [µm] - OPTIMIERT: größer für weiteren z-Range
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
-        "astig_focal_offset_um": 0.4,  # Halbe Fokustrennung [µm] - x-Fokus bei -c, y-Fokus bei +c
-        "astig_z_rayleigh_um": 0.6,  # Rayleigh-Bereich (depth of focus) [µm]
+        "astig_focal_offset_um": 0.7,  # Halbe Fokustrennung [µm] - ERHÖHT für f=100mm (10x stärker als f=1000mm!)
+        "astig_z_rayleigh_um": 0.3,  # Rayleigh-Bereich (depth of focus) [µm] - REDUZIERT für steilere PSF-Kurve!
         "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
         # ERWEITERTE Brechungsindex-Korrektur (NEU!)
         "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
