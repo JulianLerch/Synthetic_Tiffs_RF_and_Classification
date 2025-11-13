@@ -125,7 +125,7 @@ TDI_PRESET = DetectorPreset(
     fwhm_um=0.40,
     metadata={
         "detector_type": "TDI Line Scan Camera",
-        "numerical_aperture": 1.2,
+        "numerical_aperture": 1.5,
         "wavelength_nm": 580,
         "quantum_efficiency": 0.85,
         # Zusätzliche Simulationsparameter
@@ -140,14 +140,13 @@ TDI_PRESET = DetectorPreset(
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
         "astig_focal_offset_um": 0.7,  # Halbe Fokustrennung [µm] - ERHÖHT für f=100mm (10x stärker als f=1000mm!)
         "astig_z_rayleigh_um": 0.3,  # Rayleigh-Bereich (depth of focus) [µm] - REDUZIERT für steilere PSF-Kurve!
-        "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
-        # ERWEITERTE Brechungsindex-Korrektur (NEU!)
-        "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
-        "n_oil": 1.518,       # Brechungsindex Immersionsöl (z.B. Olympus TIRF-Öl)
-        "n_glass": 1.523,     # Brechungsindex Deckglas (High Precision Coverslide)
-        "n_polymer": 1.54,    # Brechungsindex Polymer/Medium (1.52-1.54 für PMMA/PS, 1.33 für Wasser, 1.47 für PAAm-Hydrogel)
-        "NA": 1.45,           # Numerische Apertur des Objektivs (z.B. 1.45-1.49 für TIRF-Objektiv, muss < n_polymer sein!)
-        "d_glass_um": 170.0,  # Deckglas-Dicke [µm] (typisch: 170 µm für #1.5 High Precision Slides)
+        # Brechungsindex-Korrektur (REALISTISCH für Polymer-Filme)
+        "use_advanced_refractive_correction": True,  # Nutzt realistische Brechungsindizes
+        "n_oil": 1.518,       # Brechungsindex Immersionsöl (Standard)
+        "n_glass": 1.523,     # Brechungsindex Deckglas (#1.5 High Precision)
+        "n_polymer": 1.54,    # Brechungsindex Polymer (Polyester/PMMA)
+        "NA": 1.5,            # Numerische Apertur 100x Öl-Objektiv
+        "d_glass_um": 170.0,  # Deckglas-Dicke [µm] (#1.5 coverslip)
         # Ausleuchtungsgradient (hyperrealistisch)
         "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
         "illumination_gradient_type": "radial",  # "radial", "linear_x", "linear_y", "corner"
@@ -165,7 +164,7 @@ TETRASPECS_PRESET = DetectorPreset(
     fwhm_um=0.40,
     metadata={
         "detector_type": "sCMOS Camera",
-        "numerical_aperture": 1.2,
+        "numerical_aperture": 1.5,
         "wavelength_nm": 580,
         "quantum_efficiency": 0.90,
         # Zusätzliche Simulationsparameter
@@ -180,14 +179,13 @@ TETRASPECS_PRESET = DetectorPreset(
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
         "astig_focal_offset_um": 0.7,  # Halbe Fokustrennung [µm] - ERHÖHT für f=100mm (10x stärker als f=1000mm!)
         "astig_z_rayleigh_um": 0.3,  # Rayleigh-Bereich (depth of focus) [µm] - REDUZIERT für steilere PSF-Kurve!
-        "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
-        # ERWEITERTE Brechungsindex-Korrektur (NEU!)
-        "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
-        "n_oil": 1.518,       # Brechungsindex Immersionsöl (z.B. Olympus TIRF-Öl)
-        "n_glass": 1.523,     # Brechungsindex Deckglas (High Precision Coverslide)
-        "n_polymer": 1.54,    # Brechungsindex Polymer/Medium (1.52-1.54 für PMMA/PS, 1.33 für Wasser, 1.47 für PAAm-Hydrogel)
-        "NA": 1.45,           # Numerische Apertur des Objektivs (z.B. 1.45-1.49 für TIRF-Objektiv, muss < n_polymer sein!)
-        "d_glass_um": 170.0,  # Deckglas-Dicke [µm] (typisch: 170 µm für #1.5 High Precision Slides)
+        # Brechungsindex-Korrektur (REALISTISCH für Polymer-Filme)
+        "use_advanced_refractive_correction": True,  # Nutzt realistische Brechungsindizes
+        "n_oil": 1.518,       # Brechungsindex Immersionsöl (Standard)
+        "n_glass": 1.523,     # Brechungsindex Deckglas (#1.5 High Precision)
+        "n_polymer": 1.54,    # Brechungsindex Polymer (Polyester/PMMA)
+        "NA": 1.5,            # Numerische Apertur 100x Öl-Objektiv
+        "d_glass_um": 170.0,  # Deckglas-Dicke [µm] (#1.5 coverslip)
         # Ausleuchtungsgradient (hyperrealistisch)
         "illumination_gradient_strength": 0.0,  # 0.0 = aus, 5-20 = subtil, >20 = stark
         "illumination_gradient_type": "radial",  # "radial", "linear_x", "linear_y", "corner"
