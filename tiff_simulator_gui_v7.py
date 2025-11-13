@@ -575,7 +575,7 @@ class CompleteGUI:
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # === ASTIGMATISM PARAMETERS ===
-        card = self._create_card(content, "🔬 Astigmatismus-Parameter (v4.2 FIXED)")
+        card = self._create_card(content, "🔬 Astigmatismus-Parameter (v5.0 - f=100mm)")
 
         row = 0
         tk.Label(card, text="Fokustrennung (µm):", font=("Segoe UI", 10, "bold"),
@@ -583,10 +583,10 @@ class CompleteGUI:
         self.adv_focal_offset = tk.Spinbox(card, from_=0.1, to=1.0, width=15,
                                           increment=0.05, format="%.2f", font=("Segoe UI", 10))
         self.adv_focal_offset.delete(0, tk.END)
-        self.adv_focal_offset.insert(0, "0.40")
+        self.adv_focal_offset.insert(0, "0.70")
         self.adv_focal_offset.grid(row=row, column=1, sticky='w', padx=10, pady=5)
-        tk.Label(card, text="Standard: 0.4", font=("Segoe UI", 8, "italic"),
-                bg=self.COLORS['card_bg'], fg='#7f8c8d').grid(row=row, column=2, sticky='w')
+        tk.Label(card, text="Optimiert für f=100mm", font=("Segoe UI", 8, "italic"),
+                bg=self.COLORS['card_bg'], fg='#27ae60').grid(row=row, column=2, sticky='w')
 
         row += 1
         tk.Label(card, text="Rayleigh-Bereich (µm):", font=("Segoe UI", 10, "bold"),
@@ -594,63 +594,10 @@ class CompleteGUI:
         self.adv_z_rayleigh = tk.Spinbox(card, from_=0.3, to=1.5, width=15,
                                         increment=0.05, format="%.2f", font=("Segoe UI", 10))
         self.adv_z_rayleigh.delete(0, tk.END)
-        self.adv_z_rayleigh.insert(0, "0.60")
+        self.adv_z_rayleigh.insert(0, "0.30")
         self.adv_z_rayleigh.grid(row=row, column=1, sticky='w', padx=10, pady=5)
-        tk.Label(card, text="Standard: 0.6", font=("Segoe UI", 8, "italic"),
-                bg=self.COLORS['card_bg'], fg='#7f8c8d').grid(row=row, column=2, sticky='w')
-
-        # === REFRACTIVE INDEX ===
-        card2 = self._create_card(content, "🌊 Brechungsindex-Korrektur")
-
-        self.adv_use_refractive = tk.BooleanVar(value=False)
-        tk.Checkbutton(card2, text="Erweiterte Brechungsindex-Korrektur aktivieren",
-                      variable=self.adv_use_refractive,
-                      font=("Segoe UI", 10, "bold"),
-                      bg=self.COLORS['card_bg'],
-                      command=self._toggle_refractive_params).pack(anchor='w', padx=10, pady=5)
-
-        self.refractive_frame = tk.Frame(card2, bg=self.COLORS['card_bg'])
-        self.refractive_frame.pack(fill=tk.X, padx=20, pady=5)
-
-        row = 0
-        tk.Label(self.refractive_frame, text="n (Immersionsöl):", font=("Segoe UI", 10),
-                bg=self.COLORS['card_bg']).grid(row=row, column=0, sticky='w', padx=10, pady=3)
-        self.adv_n_oil = tk.Entry(self.refractive_frame, width=15, font=("Segoe UI", 10))
-        self.adv_n_oil.insert(0, "1.518")
-        self.adv_n_oil.grid(row=row, column=1, sticky='w', padx=10, pady=3)
-        self.adv_n_oil.config(state='disabled')
-
-        row += 1
-        tk.Label(self.refractive_frame, text="n (Deckglas):", font=("Segoe UI", 10),
-                bg=self.COLORS['card_bg']).grid(row=row, column=0, sticky='w', padx=10, pady=3)
-        self.adv_n_glass = tk.Entry(self.refractive_frame, width=15, font=("Segoe UI", 10))
-        self.adv_n_glass.insert(0, "1.523")
-        self.adv_n_glass.grid(row=row, column=1, sticky='w', padx=10, pady=3)
-        self.adv_n_glass.config(state='disabled')
-
-        row += 1
-        tk.Label(self.refractive_frame, text="n (Polymer/Medium):", font=("Segoe UI", 10),
-                bg=self.COLORS['card_bg']).grid(row=row, column=0, sticky='w', padx=10, pady=3)
-        self.adv_n_polymer = tk.Entry(self.refractive_frame, width=15, font=("Segoe UI", 10))
-        self.adv_n_polymer.insert(0, "1.47")
-        self.adv_n_polymer.grid(row=row, column=1, sticky='w', padx=10, pady=3)
-        self.adv_n_polymer.config(state='disabled')
-
-        row += 1
-        tk.Label(self.refractive_frame, text="NA (Objektiv):", font=("Segoe UI", 10),
-                bg=self.COLORS['card_bg']).grid(row=row, column=0, sticky='w', padx=10, pady=3)
-        self.adv_na = tk.Entry(self.refractive_frame, width=15, font=("Segoe UI", 10))
-        self.adv_na.insert(0, "1.45")
-        self.adv_na.grid(row=row, column=1, sticky='w', padx=10, pady=3)
-        self.adv_na.config(state='disabled')
-
-        row += 1
-        tk.Label(self.refractive_frame, text="Deckglas-Dicke (µm):", font=("Segoe UI", 10),
-                bg=self.COLORS['card_bg']).grid(row=row, column=0, sticky='w', padx=10, pady=3)
-        self.adv_d_glass = tk.Entry(self.refractive_frame, width=15, font=("Segoe UI", 10))
-        self.adv_d_glass.insert(0, "170.0")
-        self.adv_d_glass.grid(row=row, column=1, sticky='w', padx=10, pady=3)
-        self.adv_d_glass.config(state='disabled')
+        tk.Label(card, text="Steile PSF-Kurve", font=("Segoe UI", 8, "italic"),
+                bg=self.COLORS['card_bg'], fg='#27ae60').grid(row=row, column=2, sticky='w')
 
         # === ILLUMINATION ===
         card3 = self._create_card(content, "💡 Ausleuchtungsgradient")
@@ -680,20 +627,21 @@ class CompleteGUI:
 
         info_text = """Diese Parameter beeinflussen die physikalische Genauigkeit der Simulation.
 
-🔬 Astigmatismus-Parameter:
-   • Fokustrennung: Abstand zwischen x- und y-Fokus
-   • Rayleigh-Bereich: Tiefenschärfe der PSF
-
-🌊 Brechungsindex-Korrektur:
-   • Berücksichtigt Aberrationen durch Brechungsindex-Mismatch
-   • Wichtig für tiefe z-Stacks (>2µm)
+🔬 Astigmatismus-Parameter (f=100mm Zylinderlinse):
+   • Fokustrennung: 0.7 µm (Abstand zwischen x- und y-Fokus)
+   • Rayleigh-Bereich: 0.3 µm (Tiefenschärfe der PSF)
+   • Optimiert für 100x Öl-Objektiv (NA=1.5)
+   • Beseitigt trimodale z-Verteilung! ✓
 
 💡 Ausleuchtungsgradient:
    • Simuliert inhomogene Beleuchtung
    • Typisch bei TIRF oder Weitfeld-Mikroskopie
 
-⚠️ Hinweis: Standard-Werte sind für die meisten Anwendungen optimal!
-Ändere diese nur, wenn du die physikalischen Auswirkungen verstehst.
+🌊 Brechungsindex:
+   • Standard-Werte bereits optimal für Polymer-Filme!
+   • n_oil=1.518, n_glass=1.523, n_polymer=1.54, NA=1.5
+
+⚠️ Hinweis: Defaults sind speziell für dein System optimiert!
 """
 
         tk.Label(card4, text=info_text,
@@ -754,13 +702,6 @@ class CompleteGUI:
                         fg=self.COLORS['info'], cursor="hand2")
         label.grid(row=row, column=column, sticky='w', padx=5)
         # TODO: Add actual tooltip on hover
-
-    def _toggle_refractive_params(self):
-        """Enable/disable refractive index parameters"""
-        state = 'normal' if self.adv_use_refractive.get() else 'disabled'
-        for widget in [self.adv_n_oil, self.adv_n_glass, self.adv_n_polymer,
-                      self.adv_na, self.adv_d_glass]:
-            widget.config(state=state)
 
     def _create_status_bar(self):
         """Create status bar"""
@@ -1039,14 +980,8 @@ class CompleteGUI:
         detector_copy.metadata['astig_focal_offset_um'] = float(self.adv_focal_offset.get())
         detector_copy.metadata['astig_z_rayleigh_um'] = float(self.adv_z_rayleigh.get())
 
-        # Refractive index correction
-        if self.adv_use_refractive.get():
-            detector_copy.metadata['use_advanced_refractive_correction'] = True
-            detector_copy.metadata['n_oil'] = float(self.adv_n_oil.get())
-            detector_copy.metadata['n_glass'] = float(self.adv_n_glass.get())
-            detector_copy.metadata['n_polymer'] = float(self.adv_n_polymer.get())
-            detector_copy.metadata['NA'] = float(self.adv_na.get())
-            detector_copy.metadata['d_glass_um'] = float(self.adv_d_glass.get())
+        # Refractive index correction is always enabled with optimal values (from preset)
+        # No GUI controls needed - values are already set in preset defaults
 
         # Illumination gradient
         detector_copy.metadata['illumination_gradient_strength'] = float(self.adv_illum_strength.get())
@@ -1059,12 +994,6 @@ class CompleteGUI:
         params = {
             'astig_focal_offset_um': float(self.adv_focal_offset.get()),
             'astig_z_rayleigh_um': float(self.adv_z_rayleigh.get()),
-            'use_advanced_refractive_correction': self.adv_use_refractive.get(),
-            'n_oil': float(self.adv_n_oil.get()) if self.adv_use_refractive.get() else 1.518,
-            'n_glass': float(self.adv_n_glass.get()) if self.adv_use_refractive.get() else 1.523,
-            'n_polymer': float(self.adv_n_polymer.get()) if self.adv_use_refractive.get() else 1.47,
-            'NA': float(self.adv_na.get()) if self.adv_use_refractive.get() else 1.45,
-            'd_glass_um': float(self.adv_d_glass.get()) if self.adv_use_refractive.get() else 170.0,
             'illumination_gradient_strength': float(self.adv_illum_strength.get()),
             'illumination_gradient_type': self.adv_illum_type.get()
         }
@@ -1097,21 +1026,6 @@ class CompleteGUI:
 
                 self.adv_z_rayleigh.delete(0, tk.END)
                 self.adv_z_rayleigh.insert(0, str(params['astig_z_rayleigh_um']))
-
-                self.adv_use_refractive.set(params['use_advanced_refractive_correction'])
-                self._toggle_refractive_params()
-
-                if params['use_advanced_refractive_correction']:
-                    self.adv_n_oil.delete(0, tk.END)
-                    self.adv_n_oil.insert(0, str(params['n_oil']))
-                    self.adv_n_glass.delete(0, tk.END)
-                    self.adv_n_glass.insert(0, str(params['n_glass']))
-                    self.adv_n_polymer.delete(0, tk.END)
-                    self.adv_n_polymer.insert(0, str(params['n_polymer']))
-                    self.adv_na.delete(0, tk.END)
-                    self.adv_na.insert(0, str(params['NA']))
-                    self.adv_d_glass.delete(0, tk.END)
-                    self.adv_d_glass.insert(0, str(params['d_glass_um']))
 
                 self.adv_illum_strength.delete(0, tk.END)
                 self.adv_illum_strength.insert(0, str(params['illumination_gradient_strength']))
