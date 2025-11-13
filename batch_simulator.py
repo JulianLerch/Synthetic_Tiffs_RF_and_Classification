@@ -26,10 +26,11 @@ try:
         TDI_PRESET, TETRASPECS_PRESET, TIFFSimulator, save_tiff
     )
     from metadata_exporter import MetadataExporter
+    from trackmate_exporter import TrackMateExporter
 except ImportError as e:
     print(f"❌ Import Error: {e}")
-    print("   Stelle sicher, dass tiff_simulator_v3.py und metadata_exporter.py")
-    print("   im gleichen Ordner sind!")
+    print("   Stelle sicher, dass tiff_simulator_v3.py, metadata_exporter.py")
+    print("   und trackmate_exporter.py im gleichen Ordner sind!")
     exit(1)
 
 
@@ -57,6 +58,10 @@ class BatchSimulator:
 
         self.tasks = []
         self.metadata_exporter = MetadataExporter(self.output_dir)
+        self.trackmate_exporter = TrackMateExporter(pixel_size_um=0.11)
+
+        # Track completed tasks by polyzeit for XML export
+        self.completed_tasks_by_polyzeit = {}  # {polyzeit: [task_info, ...]}
 
         # Statistik
         self.stats = {
@@ -306,6 +311,9 @@ class BatchSimulator:
 
         self.stats['end_time'] = datetime.now()
 
+        # Generiere TrackMate XML-Dateien für jede Polyzeit
+        self._generate_trackmate_xmls()
+
         # Zusammenfassung
         self._print_summary()
 
@@ -344,14 +352,87 @@ class BatchSimulator:
                 enable_photophysics=task.get('enable_photophysics', False)
             )
 
+        # Determine output subfolder based on polyzeit
+        # Group by polyzeit (not for z_stack mode)
+        if task['mode'] != 'z_stack' and 't_poly_min' in task:
+            polyzeit = task['t_poly_min']
+            polyzeit_folder = self.output_dir / f"polyzeit_{int(polyzeit)}min"
+            polyzeit_folder.mkdir(exist_ok=True, parents=True)
+            output_folder = polyzeit_folder
+        else:
+            # z_stack and other modes go to root
+            output_folder = self.output_dir
+
         # Speichere TIFF
-        tiff_path = self.output_dir / task['filename']
+        tiff_path = output_folder / task['filename']
         save_tiff(str(tiff_path), tiff_stack)
 
         # Exportiere Metadata
         metadata = sim.get_metadata()
         base_filename = Path(task['filename']).stem
+
+        # Temporarily change metadata_exporter output_dir for this file
+        original_export_dir = self.metadata_exporter.output_dir
+        self.metadata_exporter.output_dir = output_folder
         self.metadata_exporter.export_all(metadata, base_filename)
+        self.metadata_exporter.output_dir = original_export_dir
+
+        # Track completed task for XML export
+        if task['mode'] != 'z_stack' and 't_poly_min' in task:
+            polyzeit = task['t_poly_min']
+            if polyzeit not in self.completed_tasks_by_polyzeit:
+                self.completed_tasks_by_polyzeit[polyzeit] = []
+
+            self.completed_tasks_by_polyzeit[polyzeit].append({
+                'metadata_path': output_folder / f"{base_filename}_metadata.json",
+                'tiff_path': tiff_path,
+                'output_folder': output_folder,
+                'frame_rate_hz': task.get('frame_rate_hz', 20.0),
+                'has_astigmatism': task['astigmatism']
+            })
+
+    def _generate_trackmate_xmls(self) -> None:
+        """
+        Generiert TrackMate XML-Dateien für jede Polyzeit.
+
+        Aggregiert alle Tracks aller Wiederholungen einer Polyzeit in eine XML.
+        """
+
+        if len(self.completed_tasks_by_polyzeit) == 0:
+            return
+
+        print(f"\n📊 GENERIERE TRACKMATE XML-DATEIEN")
+        print(f"=" * 70)
+
+        for polyzeit, tasks in sorted(self.completed_tasks_by_polyzeit.items()):
+            try:
+                # Collect all metadata paths for this polyzeit
+                metadata_paths = [task['metadata_path'] for task in tasks]
+
+                # Determine output path (in polyzeit folder)
+                output_folder = tasks[0]['output_folder']
+                xml_filename = f"trackmate_polyzeit_{int(polyzeit)}min_all_tracks.xml"
+                xml_path = output_folder / xml_filename
+
+                # Get frame rate (should be same for all tasks in this polyzeit)
+                frame_rate_hz = tasks[0]['frame_rate_hz']
+
+                # Check if any task has astigmatism
+                has_astigmatism = any(task['has_astigmatism'] for task in tasks)
+
+                # Generate XML
+                print(f"  Polyzeit {int(polyzeit)} min: {len(tasks)} Datei(en) → {xml_filename}")
+
+                self.trackmate_exporter.export_from_metadata_files(
+                    metadata_paths=metadata_paths,
+                    output_path=xml_path,
+                    frame_rate_hz=frame_rate_hz
+                )
+
+            except Exception as e:
+                print(f"  ❌ Fehler bei Polyzeit {int(polyzeit)} min: {e}")
+
+        print(f"=" * 70)
 
     def _print_summary(self) -> None:
         """Druckt Zusammenfassung."""
