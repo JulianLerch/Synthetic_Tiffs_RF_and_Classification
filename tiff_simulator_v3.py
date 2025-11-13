@@ -135,11 +135,11 @@ TDI_PRESET = DetectorPreset(
         "on_mean_frames": 4.0,
         "off_mean_frames": 6.0,
         "bleach_prob_per_frame": 0.002,
-        # Z-Stack Kalibrierungs-Parameter (OPTIMIERT für Astigmatismus-Kalibrierung)
+        # Z-Stack Kalibrierungs-Parameter (FIXED: Wissenschaftlich korrekte Astigmatismus-Implementierung)
         "z_amp_um": 1.2,  # Intensitätsabfall-Skala in z [µm] - OPTIMIERT: größer für weiteren z-Range
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
-        "astig_z0_um": 0.7,  # Charakteristische Länge für Astigmatismus [µm] - OPTIMIERT: bessere Spreizung
-        "astig_coeffs": {"A_x": 1.5, "B_x": 0.0, "A_y": -1.2, "B_y": 0.0},  # OPTIMIERT: stärkerer Astigmatismus
+        "astig_focal_offset_um": 0.4,  # Halbe Fokustrennung [µm] - x-Fokus bei -c, y-Fokus bei +c
+        "astig_z_rayleigh_um": 0.6,  # Rayleigh-Bereich (depth of focus) [µm]
         "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
         # ERWEITERTE Brechungsindex-Korrektur (NEU!)
         "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
@@ -175,11 +175,11 @@ TETRASPECS_PRESET = DetectorPreset(
         "on_mean_frames": 5.0,
         "off_mean_frames": 7.0,
         "bleach_prob_per_frame": 0.0015,
-        # Z-Stack Kalibrierungs-Parameter (OPTIMIERT für Astigmatismus-Kalibrierung)
+        # Z-Stack Kalibrierungs-Parameter (FIXED: Wissenschaftlich korrekte Astigmatismus-Implementierung)
         "z_amp_um": 1.2,  # Intensitätsabfall-Skala in z [µm] - OPTIMIERT: größer für weiteren z-Range
         "z_max_um": 0.6,  # Maximale z-Auslenkung [µm] für Trajektorien
-        "astig_z0_um": 0.7,  # Charakteristische Länge für Astigmatismus [µm] - OPTIMIERT: bessere Spreizung
-        "astig_coeffs": {"A_x": 1.5, "B_x": 0.0, "A_y": -1.2, "B_y": 0.0},  # OPTIMIERT: stärkerer Astigmatismus
+        "astig_focal_offset_um": 0.4,  # Halbe Fokustrennung [µm] - x-Fokus bei -c, y-Fokus bei +c
+        "astig_z_rayleigh_um": 0.6,  # Rayleigh-Bereich (depth of focus) [µm]
         "refractive_index_correction": 1.0,  # Einfacher Faktor (Legacy): z_scheinbar = z_tatsächlich * factor
         # ERWEITERTE Brechungsindex-Korrektur (NEU!)
         "use_advanced_refractive_correction": False,  # Aktiviert erweiterte Korrektur mit n_oil, n_glass, n_polymer, NA
@@ -704,12 +704,22 @@ class PSFGeneratorOptimized:
         # Astigmatismus-Parameter und Brechungsindex-Korrektur
         meta = getattr(detector, 'metadata', {}) or {}
         if astigmatism:
-            self.z0_um = float(meta.get("astig_z0_um", 0.5))
-            coeffs = meta.get("astig_coeffs", {}) or {}
-            self.Ax = float(coeffs.get("A_x", 1.0))
-            self.Bx = float(coeffs.get("B_x", 0.0))
-            self.Ay = float(coeffs.get("A_y", -0.5))
-            self.By = float(coeffs.get("B_y", 0.0))
+            # NEUE PHYSIKALISCH KORREKTE PARAMETER
+            self.focal_offset_um = float(meta.get("astig_focal_offset_um", 0.4))  # Halbe Fokustrennung
+            self.z_rayleigh_um = float(meta.get("astig_z_rayleigh_um", 0.6))  # Rayleigh-Bereich
+
+            # Backward compatibility: Fallback auf alte Parameter falls neue nicht vorhanden
+            if "astig_z0_um" in meta and "astig_focal_offset_um" not in meta:
+                # Legacy-Modus: Verwende alte Koeffizienten
+                self.use_legacy_astig = True
+                self.z0_um = float(meta.get("astig_z0_um", 0.5))
+                coeffs = meta.get("astig_coeffs", {}) or {}
+                self.Ax = float(coeffs.get("A_x", 1.0))
+                self.Bx = float(coeffs.get("B_x", 0.0))
+                self.Ay = float(coeffs.get("A_y", 1.0))  # Jetzt IMMER positiv!
+                self.By = float(coeffs.get("B_y", 0.0))
+            else:
+                self.use_legacy_astig = False
 
             # ERWEITERTE Brechungsindex-Korrektur (NEU!)
             self.use_advanced_correction = bool(meta.get("use_advanced_refractive_correction", False))
@@ -728,6 +738,7 @@ class PSFGeneratorOptimized:
         else:
             self.refractive_correction = 1.0
             self.use_advanced_correction = False
+            self.use_legacy_astig = False
 
         # Pre-compute grids
         self._coord_grids = {}
@@ -785,13 +796,35 @@ class PSFGeneratorOptimized:
                 # Legacy: Einfache Korrektur
                 z_corrected = z_positions * self.refractive_correction
 
-            z_norm = z_corrected / self.z0_um
-            term_x = 1.0 + self.Ax * (z_norm**2) + self.Bx * (z_norm**4)
-            term_y = 1.0 + self.Ay * (z_norm**2) + self.By * (z_norm**4)
-            term_x = np.maximum(term_x, self._sigma_eps)
-            term_y = np.maximum(term_y, self._sigma_eps)
-            sigma_x = self.sigma_px * np.sqrt(term_x)
-            sigma_y = self.sigma_px * np.sqrt(term_y)
+            if self.use_legacy_astig:
+                # Legacy polynomial formula (backward compatibility)
+                z_norm = z_corrected / self.z0_um
+                term_x = 1.0 + self.Ax * (z_norm**2) + self.Bx * (z_norm**4)
+                term_y = 1.0 + self.Ay * (z_norm**2) + self.By * (z_norm**4)
+                term_x = np.maximum(term_x, self._sigma_eps)
+                term_y = np.maximum(term_y, self._sigma_eps)
+                sigma_x = self.sigma_px * np.sqrt(term_x)
+                sigma_y = self.sigma_px * np.sqrt(term_y)
+            else:
+                # NEUE PHYSIKALISCH KORREKTE FORMEL (Huang et al. 2008)
+                # σ_x(z) = σ_0 * sqrt(1 + ((z - z_fx) / z_R)^2)
+                # σ_y(z) = σ_0 * sqrt(1 + ((z - z_fy) / z_R)^2)
+                # c = focal_offset_um
+                # z_R = Rayleigh-Bereich (depth of focus)
+                #
+                # Convention: x-Fokus bei +c, y-Fokus bei -c
+                # Ergebnis: z<0 → horizontal, z=0 → rund, z>0 → vertikal
+
+                c = self.focal_offset_um
+                z_R = self.z_rayleigh_um
+
+                # x-Achse: Fokus bei z = +c (oberhalb der Fokusebene)
+                term_x = 1.0 + ((z_corrected - (+c)) / z_R)**2
+                # y-Achse: Fokus bei z = -c (unterhalb der Fokusebene)
+                term_y = 1.0 + ((z_corrected - (-c)) / z_R)**2
+
+                sigma_x = self.sigma_px * np.sqrt(term_x)
+                sigma_y = self.sigma_px * np.sqrt(term_y)
         else:
             sigma_x = np.full(n_spots, self.sigma_px, dtype=np.float32)
             sigma_y = np.full(n_spots, self.sigma_px, dtype=np.float32)
@@ -833,14 +866,30 @@ class PSFGeneratorOptimized:
 
     def get_metadata(self) -> Dict:
         """Gibt PSF-Metadata zurück"""
-        return {
+        meta = {
             "fwhm_um": self.detector.fwhm_um,
             "sigma_px": self.sigma_px,
             "pixel_size_um": self.detector.pixel_size_um,
             "astigmatism": self.astigmatism,
-            "z0_um": self.z0_um if self.astigmatism else None,
             "optimized": True
         }
+
+        if self.astigmatism:
+            if self.use_legacy_astig:
+                meta.update({
+                    "astigmatism_mode": "legacy_polynomial",
+                    "z0_um": self.z0_um,
+                    "Ax": self.Ax,
+                    "Ay": self.Ay
+                })
+            else:
+                meta.update({
+                    "astigmatism_mode": "physical_defocus",
+                    "focal_offset_um": self.focal_offset_um,
+                    "z_rayleigh_um": self.z_rayleigh_um
+                })
+
+        return meta
 
 
 # ============================================================================
