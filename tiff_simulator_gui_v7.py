@@ -386,8 +386,8 @@ class CompleteGUI:
                             "✓ z < 0: PSF horizontal gestreckt (σx > σy)\n"
                             "✓ z = 0: PSF rund (σx ≈ σy)\n"
                             "✓ z > 0: PSF vertikal gestreckt (σy > σx)\n\n"
-                            "💪 STARKER Astigmatismus (beseitigt trimodale z-Verteilung!)\n"
-                            "📐 focal_offset=0.7µm, z_rayleigh=0.3µm\n"
+                            "💪 MODERATE Balance (kein PSF-Sprung!)\n"
+                            "📐 focal_offset=0.5µm, z_rayleigh=0.4µm\n"
                             "📊 Default: -0.6 bis +0.6µm, step=20nm\n\n"
                             "Kompatibel mit TrackMate und ThunderSTORM",
                        font=("Segoe UI", 10),
@@ -583,9 +583,9 @@ class CompleteGUI:
         self.adv_focal_offset = tk.Spinbox(card, from_=0.1, to=1.0, width=15,
                                           increment=0.05, format="%.2f", font=("Segoe UI", 10))
         self.adv_focal_offset.delete(0, tk.END)
-        self.adv_focal_offset.insert(0, "0.70")
+        self.adv_focal_offset.insert(0, "0.50")
         self.adv_focal_offset.grid(row=row, column=1, sticky='w', padx=10, pady=5)
-        tk.Label(card, text="Optimiert für f=100mm", font=("Segoe UI", 8, "italic"),
+        tk.Label(card, text="Optimale Balance!", font=("Segoe UI", 8, "italic"),
                 bg=self.COLORS['card_bg'], fg='#27ae60').grid(row=row, column=2, sticky='w')
 
         row += 1
@@ -594,9 +594,9 @@ class CompleteGUI:
         self.adv_z_rayleigh = tk.Spinbox(card, from_=0.3, to=1.5, width=15,
                                         increment=0.05, format="%.2f", font=("Segoe UI", 10))
         self.adv_z_rayleigh.delete(0, tk.END)
-        self.adv_z_rayleigh.insert(0, "0.30")
+        self.adv_z_rayleigh.insert(0, "0.40")
         self.adv_z_rayleigh.grid(row=row, column=1, sticky='w', padx=10, pady=5)
-        tk.Label(card, text="Steile PSF-Kurve", font=("Segoe UI", 8, "italic"),
+        tk.Label(card, text="Verhindert PSF-Explosion", font=("Segoe UI", 8, "italic"),
                 bg=self.COLORS['card_bg'], fg='#27ae60').grid(row=row, column=2, sticky='w')
 
         # === ILLUMINATION ===
@@ -628,10 +628,11 @@ class CompleteGUI:
         info_text = """Diese Parameter beeinflussen die physikalische Genauigkeit der Simulation.
 
 🔬 Astigmatismus-Parameter (f=100mm Zylinderlinse):
-   • Fokustrennung: 0.7 µm (Abstand zwischen x- und y-Fokus)
-   • Rayleigh-Bereich: 0.3 µm (Tiefenschärfe der PSF)
+   • Fokustrennung: 0.5 µm (optimale Balance!)
+   • Rayleigh-Bereich: 0.4 µm (verhindert PSF-Explosion)
+   • Max PSF-Größe: 2.9x (statt 4.4x!) ✓
+   • Steigung: 5.4 px/µm (gute z-Präzision) ✓
    • Optimiert für 100x Öl-Objektiv (NA=1.5)
-   • Beseitigt trimodale z-Verteilung! ✓
 
 💡 Ausleuchtungsgradient:
    • Simuliert inhomogene Beleuchtung
@@ -641,7 +642,7 @@ class CompleteGUI:
    • Standard-Werte bereits optimal für Polymer-Filme!
    • n_oil=1.518, n_glass=1.523, n_polymer=1.54, NA=1.5
 
-⚠️ Hinweis: Defaults sind speziell für dein System optimiert!
+⚠️ Hinweis: Defaults verhindern "Sprung-Problem" im Z-Stack!
 """
 
         tk.Label(card4, text=info_text,
